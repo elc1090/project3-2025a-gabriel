@@ -2,10 +2,10 @@
 
 <img src="preview.png" alt="desktop preview" width="720"/>
 
-Acesso: https://elc1090.github.io/project2-2025a-gabriel/
+Acesso: [https://elc1090.github.io/project2-2025a-gabriel/](https://elc1090.github.io/project3-2025a-gabriel/)
 
 
-### Desenvolvedores
+### Desenvolvedor
 Gabriel Bisognin Moro | Ciência da Computação
 
 
@@ -15,25 +15,18 @@ Galeria de exercícios através da [API wger](https://wger.de/pt-br/software/api
 
 
 ### Desenvolvimento
-Ao longo do desenvolvimento eu fui mudando algumas poucas coisas, como uma mudança de cor no CSS, formato de algo, ou mudança de alguma descrição. Os passos abaixo mostram uma visão geral do desenvolvimento:
 
-1- Criação de um site mockup, apenas em HTML e CSS, com o formato geral que imaginei e populando com cards fakes, filtros fakes, chips fakes, que depois serão substituídos pela API.  
-2- Correções gerais e criação de uma página para salvar exercícios favoritos.  
-3- Javascript inícial para funcionalidade dos botões.  
-4- Integração inicial da API, popula os exercícios corretamente.  
-5- Correção da API.  
-6- Filtros fakes agora populados dinâmicamente através da API.  
-7- Chips fakes agora populados dinâmicamente através da API.  
-8- Implementação (e depois correção) da busca, através da API de busca.  
-9- Funcionalidades melhoradas na página de favoritos (importar, exportar e adição de categorias).  
-10- Melhorias gerais e remoção de código redundante.  
 
 #### Tecnologias
 
 - HTML  
 - CSS  
 - JavaScript
-- [Claude.ai](https://claude.ai/)
+- Vite
+- Vue
+- SQLAlchemy
+- Flask
+- [Gemini](https://gemini.google.com/)
 
 #### Ambiente de desenvolvimento
 
@@ -44,6 +37,6 @@ Ao longo do desenvolvimento eu fui mudando algumas poucas coisas, como uma mudan
 
 - Documentação da [API wger](https://wger.de/pt-br/software/api)  
 - Exploração do [site wger](https://wger.de/pt-br/exercise/overview/), para verificar como algumas requisições eram feitas
-- [Claude](https://claude.ai/new) para criar códigos que seriam repetitivos, otimizar e limpar o código
+- [Gemini](https://gemini.google.com/) para criar códigos que seriam repetitivos, otimizar e limpar o código
 
 Projeto entregue para a disciplina de [Desenvolvimento de Software para a Web](http://github.com/andreainfufsm/elc1090-2025a) em 2025a
