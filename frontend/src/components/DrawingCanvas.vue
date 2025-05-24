@@ -68,7 +68,9 @@ onMounted(() => {
   window.addEventListener('resize', setupViewportAndWorld);
 
   // Conectar ao servidor Socket.IO
-  socket.value = io('http://localhost:5000');
+  const backendUrl = 'https://project3-2025a-gabriel.onrender.com';
+  socket.value = io(backendUrl, {
+	});
 
   socket.value.on('connect', () => {
     console.log('Conectado ao servidor Socket.IO com ID:', socket.value.id);
