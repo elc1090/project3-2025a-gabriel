@@ -23,6 +23,9 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue';
 import ContextMenu from './ContextMenu.vue';
+import { io } from 'socket.io-client';
+
+const socket = ref(null);
 
 const viewportCanvasRef = ref(null);
 let ctx = null;
@@ -58,6 +61,70 @@ const menu = reactive({
   x: 0,
   y: 0,
 });
+
+// --- Ciclo de Vida e Conexão Socket.IO ---
+onMounted(() => {
+  setupViewportAndWorld(); // Configura o tamanho inicial e a visualização
+  window.addEventListener('resize', setupViewportAndWorld);
+
+  // Conectar ao servidor Socket.IO
+  socket.value = io('http://localhost:5000');
+
+  socket.value.on('connect', () => {
+    console.log('Conectado ao servidor Socket.IO com ID:', socket.value.id);
+  });
+
+  socket.value.on('connection_established', (data) => {
+    console.log(data.message, 'SID do servidor:', data.sid);
+  });
+
+  socket.value.on('disconnect', () => {
+    console.log('Desconectado do servidor Socket.IO');
+  });
+
+  // Ouvir por traços iniciais ao conectar
+  socket.value.on('initial_drawing', (data) => {
+    console.log('Recebendo desenho inicial:', data.strokes.length, 'traços');
+    strokes.value = data.strokes.map(strokeData => {
+      // Garantir que a espessura seja tratada como espessura do mundo
+      return {
+        points: strokeData.points,
+        color: strokeData.color,
+        lineWidth: strokeData.lineWidth // Backend envia espessura do mundo
+      };
+    });
+    redraw();
+  });
+
+  // Ouvir por novos traços de outros usuários
+  socket.value.on('stroke_received', (strokeData) => {
+    console.log('Novo traço recebido:', strokeData);
+    // Adicionar o traço recebido à lista local
+    // O backend já deve ter salvo e está apenas retransmitindo
+    // A espessura da linha (lineWidth) já deve ser a espessura no "mundo"
+    strokes.value.push({
+      points: strokeData.points,
+      color: strokeData.color,
+      lineWidth: strokeData.lineWidth
+    });
+    redraw(); // Redesenha o canvas com o novo traço
+  });
+
+  // Ouvir por evento de limpar canvas
+  socket.value.on('canvas_cleared', () => {
+    console.log('Evento de limpar canvas recebido do servidor.');
+    strokes.value = []; // Limpa os traços locais
+    redraw();
+  });
+});
+
+onUnmounted(() => {
+  window.removeEventListener('resize', setupViewportAndWorld);
+  if (socket.value) {
+    socket.value.disconnect(); // Desconectar ao sair do componente
+  }
+});
+
 
 // --- Inicialização, Redimensionamento e Redesenho ---
 
@@ -210,19 +277,20 @@ function handleMouseMove(event) {
 }
 
 function handleMouseUpOrOut(event) {
-  if (event.button === 0) {
-    if (currentStroke && currentStroke.points.length === 1) {
-        // Se foi apenas um clique sem arrastar, talvez desenhar um ponto
-        // Para isso, duplicamos o ponto para formar uma linha minúscula
-        // ou usamos ctx.arc / ctx.fillRect para desenhar um ponto.
-        // Por ora, um clique sem arrastar não desenha nada visível com ctx.lineTo.
-        // Para desenhar um ponto, poderíamos adicionar o mesmo ponto novamente e o redraw cuidaria.
-        // currentStroke.points.push({...currentStroke.points[0]});
-        // redraw();
+  if (event.button === 0 && currentStroke && currentStroke.points.length > 1) {
+    // Emitir o traço completo para o servidor
+    if (socket.value) {
+      // currentStroke.lineWidth já é a espessura no "mundo"
+      socket.value.emit('draw_stroke_event', {
+        points: currentStroke.points,
+        color: currentStroke.color,
+        lineWidth: currentStroke.lineWidth
+      });
     }
-    currentStroke = null;
   }
-  if (event.button === 1 || !(event.buttons & 4)) {
+  currentStroke = null; // Resetar o traço atual
+
+  if (event.button === 1 || !(event.buttons & 4)) { // Pan
     viewportState.isPanning = false;
   }
 }
@@ -268,42 +336,43 @@ function getTouchMidpoint(t1, t2, rect) {
 }
 
 function handleTouchStart(event) {
-  menu.visible = false;
-  const rect = viewportCanvasRef.value.getBoundingClientRect();
+     menu.visible = false;
+     const rect = viewportCanvasRef.value.getBoundingClientRect();
+     for (let i = 0; i < event.changedTouches.length; i++) {
+         touchCache.push(JSON.parse(JSON.stringify(event.changedTouches[i])));
+     }
 
-  for (let i = 0; i < event.changedTouches.length; i++) {
-    touchCache.push(JSON.parse(JSON.stringify(event.changedTouches[i]))); // Clonar para evitar problemas de referência
-  }
+     if (touchCache.length === 1) {
+         const touch = touchCache[0];
+         const { x, y } = screenToWorldCoordinates(touch.clientX - rect.left, touch.clientY - rect.top);
+         currentStroke = {
+             points: [{ x, y }],
+             color: drawingSettings.color,
+             lineWidth: drawingSettings.lineWidth, // Espessura do mundo
+         };
+         strokes.value.push(currentStroke); // Adiciona localmente
+         redraw(); // Redesenha localmente
 
-  if (touchCache.length === 1) { // Um dedo: desenhar
-    const touch = touchCache[0];
-    const { x, y } = screenToWorldCoordinates(touch.clientX - rect.left, touch.clientY - rect.top);
-    currentStroke = {
-      points: [{ x, y }],
-      color: drawingSettings.color,
-      lineWidth: drawingSettings.lineWidth / viewportState.scale,
-    };
-    strokes.value.push(currentStroke);
-
-    const currentTime = new Date().getTime();
-    if (currentTime - lastTapTime < DOUBLE_TAP_THRESHOLD) {
-      resetView();
-      if (currentStroke) { // Remove o traço iniciado pelo double tap
-          strokes.value.pop();
-          currentStroke = null;
-      }
-    }
-    lastTapTime = currentTime;
-  } else if (touchCache.length === 2) { // Dois dedos: preparar para pan/zoom
-    viewportState.isPanning = true; // Usamos isPanning para indicar interação de dois dedos
-    const t1 = touchCache[0];
-    const t2 = touchCache[1];
-    initialPinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-    initialTouchMidpoint = getTouchMidpoint(t1, t2, rect);
-    // Salvar a posição inicial do offset para pan relativo ao primeiro ponto médio
-    viewportState.lastPanX = viewportState.offsetX;
-    viewportState.lastPanY = viewportState.offsetY;
-  }
+         const currentTime = new Date().getTime();
+         if (currentTime - lastTapTime < DOUBLE_TAP_THRESHOLD) {
+             resetView();
+             if (currentStroke) { 
+                 const index = strokes.value.indexOf(currentStroke);
+                 if (index > -1) strokes.value.splice(index, 1); // Remove o traço do double tap
+                 currentStroke = null;
+             }
+             redraw(); // Garante que o traço removido desapareça
+         }
+         lastTapTime = currentTime;
+     } else if (touchCache.length === 2) {
+         viewportState.isPanning = true;
+         const t1 = touchCache[0];
+         const t2 = touchCache[1];
+         initialPinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+         initialTouchMidpoint = getTouchMidpoint(t1, t2, rect);
+         viewportState.lastPanX = viewportState.offsetX;
+         viewportState.lastPanY = viewportState.offsetY;
+     }
 }
 
 function handleTouchMove(event) {
@@ -377,20 +446,27 @@ function removeTouchFromCache(touchIdentifier) {
 }
 
 function handleTouchEnd(event) {
+  if (currentStroke && currentStroke.points.length > 1) {
+    if (socket.value) {
+      // currentStroke.lineWidth já é a espessura no "mundo"
+      socket.value.emit('draw_stroke_event', {
+        points: currentStroke.points,
+        color: currentStroke.color,
+        lineWidth: currentStroke.lineWidth
+      });
+    }
+  }
+  currentStroke = null; // Resetar sempre
+
   for (let i = 0; i < event.changedTouches.length; i++) {
     removeTouchFromCache(event.changedTouches[i].identifier);
   }
-
   if (touchCache.length < 2) {
     viewportState.isPanning = false;
     initialPinchDistance = 0;
     initialTouchMidpoint = null;
   }
   if (touchCache.length < 1) {
-    if (currentStroke && currentStroke.points.length === 1) {
-        // Opcional: remover traço de ponto único se não quiser cliques
-        // strokes.value.pop();
-    }
     currentStroke = null;
   }
 }
@@ -408,21 +484,26 @@ function clearStrokes() {
 }
 
 function handleMenuSelection(action, value) {
+  menu.visible = false; // Esconde o menu após a seleção
   switch (action) {
     case 'clear':
-      clearStrokes();
+      // Limpa localmente e emite para o servidor
+      strokes.value = [];
+      redraw();
+      if (socket.value) {
+        socket.value.emit('clear_canvas_event', {}); // Envia objeto vazio ou ID do quadro
+      }
       break;
     case 'setColor':
       drawingSettings.color = value;
       break;
     case 'setThickness':
-      drawingSettings.lineWidth = value;
+      drawingSettings.lineWidth = value; // Este é o novo valor para espessura no mundo
       break;
     case 'resetView':
       resetView();
       break;
   }
-  menu.visible = false;
 }
 </script>
 
