@@ -15,3 +15,5 @@ backend/.DS_Store
 .env
 *.sqlite3
 .vscode/
+backend/desenho_local.db
+backend/instance/desenho_local.db

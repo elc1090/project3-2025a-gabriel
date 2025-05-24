@@ -1,29 +1,52 @@
 from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 import os
+import datetime
 
 app = Flask(__name__)
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1) # SQLAlchemy prefere postgresql://
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL or 'sqlite:///./desenho_local.db' # Fallback para SQLite local
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # Desativa warnings desnecessários
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL or f'sqlite:///{os.path.join(app.instance_path, "desenho_local.db")}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
-class UserTest(db.Model):
+class DrawingBoard(db.Model):
+    __tablename__ = 'drawing_board'
+
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
+    name = db.Column(db.String(100), nullable=True, unique=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    
+    strokes = db.relationship('Stroke', backref='board', lazy=True, cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f'<UserTest {self.username}>'
+        return f'<DrawingBoard id={self.id} name={self.name}>'
 
-# --- Rotas da API ---
+class Stroke(db.Model):
+    __tablename__ = 'stroke' # Nome explícito da tabela
+
+    id = db.Column(db.Integer, primary_key=True)
+    drawing_board_id = db.Column(db.Integer, db.ForeignKey('drawing_board.id'), nullable=False)
+    
+    color = db.Column(db.String(7), nullable=False) # Ex: #RRGGBB
+    line_width = db.Column(db.Float, nullable=False)
+    
+    points_json = db.Column(db.Text, nullable=False) # [{"x":10,"y":20},{"x":12,"y":22}, ...]
+
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow) # Quando o traço foi concluído/salvo
+
+    def __repr__(self):
+        return f'<Stroke id={self.id} board_id={self.drawing_board_id} color={self.color}>'
+
 @app.route('/')
 def home():
-    return "Olá do Backend Flask com SQLAlchemy configurado!"
+    return "Backend Flask com SQLAlchemy e modelos DrawingBoard/Stroke."
 
 @app.route('/api/status')
 def status_api():
@@ -31,22 +54,9 @@ def status_api():
         db.session.execute(db.text('SELECT 1'))
         db_status = "conectado"
     except Exception as e:
-        db_status = f"desconectado ({e})"
+        db_status = f"desconectado ({type(e).__name__}: {e})"
     return jsonify(message="API Flask está rodando!", database_status=db_status)
-
-@app.route('/dev/create_tables')
-def create_tables_dev():
-    if app.debug:
-        try:
-            with app.app_context():
-                db.create_all()
-            return "Tabelas criadas (se não existiam)!"
-        except Exception as e:
-            return f"Erro ao criar tabelas: {e}"
-    return "Comando não permitido fora do modo debug.", 403
 
 
 if __name__ == '__main__':
-    #  with app.app_context():
-    #      db.create_all()
     app.run(debug=True)
