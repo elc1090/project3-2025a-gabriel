@@ -11,7 +11,17 @@ import json
 
 app = Flask(__name__)
 
-CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '*')
+env_cors_str = os.environ.get('CORS_ALLOWED_ORIGINS')
+
+if env_cors_str == '*':
+    cors_config = '*'
+    print("CORS: Permitindo todas as origens ('*').")
+elif env_cors_str:
+    cors_config = [origin.strip() for origin in env_cors_str.split(',')]
+    print(f"CORS: Origens permitidas configuradas via variável de ambiente: {cors_config}")
+else:
+    cors_config = ["https://elc1090.github.io"]
+    print(f"CORS: Variável de ambiente CORS_ALLOWED_ORIGINS não definida. Usando fallback: {cors_config}")
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
