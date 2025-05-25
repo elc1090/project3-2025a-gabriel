@@ -4,26 +4,29 @@
     :style="{ top: y + 'px', left: x + 'px' }"
     @click.stop >
     <ul>
-      <li @click="emitSelection('clear')">Limpar Canvas</li>
-      <li class="separator">Cores</li>
-      <li class="color-palette">
-        <span
+      <li @click="emitSelection('clear')">Limpar Desenho</li> <!- TEXTO ALTERADO -->
+      <li @click="emitSelection('resetView')">Resetar Visualização</li>
+      
+      <li class="separator-label">Cores</li> <li class="color-palette-container"> <span
           v-for="color in palette"
           :key="color"
           :style="{ backgroundColor: color }"
           class="color-swatch"
           @click="emitSelection('setColor', color)"
+          :title="color"
         ></span>
       </li>
-      <li class="separator">Espessura</li>
-      <li class="thickness-options">
-        <button @click="emitSelection('setThickness', 2)">Fina</button>
-        <button @click="emitSelection('setThickness', 5)">Média</button>
-        <button @click="emitSelection('setThickness', 10)">Grossa</button>
-        <button @click="emitSelection('setThickness', 20)">Extra Grossa</button>
+
+      <li class="separator-label">Espessura</li>
+      <li class="thickness-options-container"> <button 
+          v-for="option in thicknessOptions" 
+          :key="option.value"
+          @click="emitSelection('setThickness', option.value)"
+          :title="`${option.label} (${option.value}px)`"
+        >
+          {{ option.label }}
+        </button>
       </li>
-	   <li @click="emitSelection('clear')">Limpar Desenho</li>
-		<li @click="emitSelection('resetView')">Resetar Visualização</li> <li class="separator">Cores</li>
     </ul>
   </div>
 </template>
@@ -34,25 +37,23 @@ import { defineProps, defineEmits } from 'vue';
 defineProps({
   x: Number,
   y: Number,
-  // visible: Boolean // não é mais necessário como prop, controlado pelo v-if no pai
 });
 
 const emit = defineEmits(['select']);
 
-const palette = [
-  '#000000', '#FFFFFF', '#EF5350', '#FFCA28', // Preto, Branco, Vermelho Suave, Âmbar
-  '#66BB6A', '#42A5F5', '#AB47BC', '#78909C', // Verde Suave, Azul Suave, Roxo Suave, Cinza Azulado
-  '#EC407A', '#FFEE58', '#9CCC65', '#26C6DA', // Rosa, Amarelo Limão, Verde Lima, Ciano Suave
-  '#FFA726', '#8D6E63', '#BDBDBD', '#546E7A', // Laranja Suave, Marrom Claro, Cinza Claro, Ardósia Escuro
+const palette = [ // Paleta de cores (mantendo a última que definimos)
+  '#000000', '#FFFFFF', '#EF5350', '#FFCA28',
+  '#66BB6A', '#42A5F5', '#AB47BC', '#78909C',
+  '#EC407A', '#FFEE58', '#9CCC65', '#26C6DA',
+  '#FFA726', '#8D6E63', '#BDBDBD', '#546E7A',
 ];
 
-
 const thicknessOptions = [
-    { label: 'Fina', value: 2},
-    { label: 'Média', value: 5},
-    { label: 'Grossa', value: 10},
-    { label: 'Extra Grossa', value: 20},
-]
+  { label: 'Fina', value: 2 },
+  { label: 'Média', value: 5 },
+  { label: 'Grossa', value: 10 },
+  { label: 'Extra Grossa', value: 20 },
+];
 
 function emitSelection(action, value = null) {
   emit('select', action, value);
@@ -61,86 +62,95 @@ function emitSelection(action, value = null) {
 
 <style scoped>
 .context-menu {
-  position: fixed; /* Ou absolute, dependendo do container pai */
+  position: fixed;
   background-color: white;
   border: 1px solid #ccc;
   box-shadow: 2px 2px 5px rgba(0,0,0,0.15);
   z-index: 1000;
-  min-width: 180px;
+  min-width: 190px; /* Um pouco mais de espaço */
+  border-radius: 4px; /* Bordas levemente arredondadas */
+  padding: 4px 0; /* Pequeno padding vertical interno */
 }
 
 .context-menu ul {
   list-style: none;
-  padding: 5px 0;
+  padding: 0;
   margin: 0;
-  color: #333333; /* <<<<<< ADICIONE OU MODIFIQUE ESTA LINHA */
+  color: #333333; 
 }
 
 .context-menu li {
-  padding: 8px 15px;
+  padding: 9px 18px; /* Aumentar um pouco o padding dos itens */
   cursor: pointer;
-  /* A cor será herdada do 'ul' ou pode ser definida aqui também se necessário. */
+  font-size: 0.95em; /* Tamanho de fonte base para itens */
 }
 
-.context-menu li:hover {
+.context-menu li:hover:not(.separator-label):not(.color-palette-container):not(.thickness-options-container) {
   background-color: #f0f0f0;
 }
 
-.context-menu li.separator {
+/* Estilo para os rótulos/separadores como "Cores", "Espessura" */
+.context-menu li.separator-label {
   font-size: 0.8em;
   font-weight: bold;
-  color: #555; /* Mantém um cinza um pouco mais claro para o separador ou mude para #333 */
+  color: #555;
   padding-top: 10px;
-  padding-bottom: 5px;
+  padding-bottom: 6px;
+  padding-left: 18px; /* Alinhar com outros itens */
   border-top: 1px solid #eee;
-  cursor: default;
+  margin-top: 4px; /* Espaço acima do separador */
+  cursor: default; /* Não é clicável */
 }
- .context-menu li.separator:hover {
-     background-color: transparent;
- }
+.context-menu li.separator-label:first-child { /* Remover borda e margem do primeiro separador se ele for o primeiro item */
+    border-top: none;
+    margin-top: 0;
+}
 
-.color-palette {
+
+.color-palette-container {
   display: grid;
   grid-template-columns: repeat(4, 1fr); /* 4 cores por linha */
-  gap: 4px;
-  padding: 5px 10px !important; /* Sobrescreve o padding do li */
+  gap: 6px; /* Espaço entre as amostras de cor */
+  padding: 8px 18px !important; /* Padding para a área da paleta */
+  cursor: default;
 }
- .color-palette:hover { /* Para não ter hover no container da paleta */
-     background-color: transparent !important;
- }
 
 .color-swatch {
-  width: 20px;
-  height: 20px;
-  border: 1px solid #eee;
+  width: 24px; /* Tamanho maior para as amostras */
+  height: 24px;
+  border: 1px solid #dbdbdb;
   display: inline-block;
   cursor: pointer;
   border-radius: 3px;
+  transition: transform 0.1s ease-in-out;
 }
 .color-swatch:hover {
-    border-color: #888;
-    transform: scale(1.1);
+  border-color: #888;
+  transform: scale(1.15); /* Efeito de hover um pouco maior */
 }
 
-.thickness-options {
+.thickness-options-container {
   display: flex;
-  justify-content: space-around;
-  padding: 5px 10px !important;
+  flex-wrap: wrap; /* Permite que os botões quebrem a linha se não couberem */
+  justify-content: space-around; /* Ou space-between */
+  align-items: center;
+  padding: 8px 10px !important; /* Padding para a área dos botões */
+  gap: 6px; /* Espaço entre os botões */
+  cursor: default;
 }
- .thickness-options:hover {
-     background-color: transparent !important;
- }
 
-.thickness-options button {
-  padding: 4px 8px;
+.thickness-options-container button {
+  padding: 5px 10px;
   font-size: 0.9em;
-  border: 1px solid #ddd;
-  background-color: #fff;
+  border: 1px solid #ccc;
+  background-color: #f9f9f9;
+  color: #000000; /* <<< COR DO TEXTO DEFINIDA PARA PRETO */
   cursor: pointer;
   border-radius: 3px;
+  transition: background-color 0.1s ease;
 }
-.thickness-options button:hover {
-  background-color: #e9e9e9;
+.thickness-options-container button:hover {
+  background-color: #e7e7e7;
   border-color: #bbb;
 }
 </style>
