@@ -22,7 +22,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
-socketio = SocketIO(app, cors_allowed_origins=CORS_ALLOWED_ORIGINS, async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins=CORS_ALLOWED_ORIGINS, async_mode='gevent')
 
 class DrawingBoard(db.Model):
     __tablename__ = 'drawing_board'
