@@ -131,7 +131,7 @@ def handle_draw_stroke_event(data):
             db.session.add(board)
 
         new_stroke = Stroke(
-            board_id=board.id,
+            drawing_board_id=board.id,
             color=data['color'],
             line_width=data['lineWidth'],
             points_json=json.dumps(data['points'])
