@@ -621,10 +621,11 @@ function handleMenuSelection(action, value) {
 
 <style scoped>
 .viewport-canvas {
-  border: 1px solid #505050; /* Borda sutil para o viewport */
+  border: 1px solid #505050;
   cursor: crosshair;
-  background-color: #777; /* Visível se o redraw não cobrir (não deve acontecer) */
-  /* O tamanho é definido via JS. A centralização é feita pelo App.vue */
-  box-shadow: 0 0 10px rgba(0,0,0,0.3); /* Uma sombra para destacar */
+  background-color: #777;
+  display: block;
+  touch-action: none;
+  box-shadow: 0 0 10px rgba(0,0,0,0.3);
 }
 </style>
