@@ -9,13 +9,20 @@ import DrawingCanvas from './components/DrawingCanvas.vue';
 </script>
 
 <style>
-html, body {
+html, body, #app {
   margin: 0;
   padding: 0;
   height: 100%;
   width: 100%;
-  overflow: hidden; /* Para evitar barras de rolagem da página */
-  background-color: #333; /* Cor de fundo escura para a página */
+  box-sizing: border-box;
+}
+
+html, body {
+  overflow: hidden; 
+}
+
+body {
+  background-color: #333;
 }
 
 #app-container {
@@ -25,4 +32,5 @@ html, body {
   height: 100%;
   width: 100%;
 }
+
 </style>
