@@ -33,13 +33,11 @@ let ctx = null;
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 1000;
 const WORLD_BACKGROUND_COLOR = '#FFFFFF';
-
-// Proporção desejada para a viewport do canvas (ex: 4:3 como 800/600)
-const TARGET_VIEWPORT_ASPECT_RATIO = (800 / 600); // ou 4 / 3
+const TARGET_VIEWPORT_ASPECT_RATIO = (800 / 600);
 
 const viewportState = reactive({
-  width: 800,  // Será atualizado dinamicamente
-  height: 600, // Será atualizado dinamicamente
+  width: 800,
+  height: 600,
   scale: 1,
   offsetX: 0,
   offsetY: 0,
@@ -50,6 +48,7 @@ const viewportState = reactive({
 
 const strokes = ref([]);
 let currentStroke = null;
+let isDrawing = false; // Adicionado para controlar o estado de desenho
 
 const drawingSettings = reactive({
   color: 'black',
@@ -62,76 +61,66 @@ const menu = reactive({
   y: 0,
 });
 
-const longPressDuration = 1000; // ms para o toque longo
+const longPressDuration = 700; // ms para o toque longo (ajustei um pouco)
 let longPressTimer = null;
-let touchStartCoords = { x: 0, y: 0, time: 0 }; // Para detectar movimento e tempo do toque longo
-const longPressMoveThreshold = 10; // Pixels que o dedo pode mover antes de cancelar o toque longo
+let touchStartCoords = { x: 0, y: 0, time: 0 };
+const longPressMoveThreshold = 10; // Pixels
 
-let isMultiTouching = false;      // Flag para indicar se estamos em um gesto de múltiplos toques (pan/zoom)
-let initialGestureInfo = {      // Para armazenar o estado inicial de um gesto de dois dedos
+let isMultiTouching = false;
+let initialGestureInfo = {
   pinchDistance: 0,
-  midpoint: { x: 0, y: 0 },   // Ponto médio na tela
-  worldMidpoint: { x: 0, y: 0}, // Ponto médio no mundo
-  offsetX: 0,                 // viewportState.offsetX inicial
-  offsetY: 0,                 // viewportState.offsetY inicial
-  scale: 1,                   // viewportState.scale inicial
+  midpoint: { x: 0, y: 0 },
+  worldMidpoint: { x: 0, y: 0},
+  offsetX: 0,
+  offsetY: 0,
+  scale: 1,
 };
 
 // --- Ciclo de Vida e Conexão Socket.IO ---
 onMounted(() => {
-  setupViewportAndWorld(); // Configura o tamanho inicial e a visualização
+  setupViewportAndWorld();
   window.addEventListener('resize', setupViewportAndWorld);
 
-  // Conectar ao servidor Socket.IO
-	const backendUrl = 'https://project3-2025a-gabriel.onrender.com';
-	socket.value = io(backendUrl, {
-	  transports: ['websocket', 'polling']
-	});
+  const backendUrl = 'https://project3-2025a-gabriel.onrender.com';
+  socket.value = io(backendUrl, {
+    transports: ['websocket', 'polling']
+  });
 
   socket.value.on('connect', () => {
-    console.log('Conectado ao servidor Socket.IO com ID:', socket.value.id);
+    console.log('FRONTEND: Conectado ao servidor Socket.IO com ID:', socket.value.id);
   });
 
   socket.value.on('connection_established', (data) => {
-    console.log(data.message, 'SID do servidor:', data.sid);
+    console.log('FRONTEND: ' + data.message, 'SID do servidor:', data.sid);
   });
 
   socket.value.on('disconnect', () => {
-    console.log('Desconectado do servidor Socket.IO');
+    console.log('FRONTEND: Desconectado do servidor Socket.IO');
   });
 
-  // Ouvir por traços iniciais ao conectar
   socket.value.on('initial_drawing', (data) => {
-    console.log('Recebendo desenho inicial:', data.strokes.length, 'traços');
-    strokes.value = data.strokes.map(strokeData => {
-      // Garantir que a espessura seja tratada como espessura do mundo
-      return {
-        points: strokeData.points,
-        color: strokeData.color,
-        lineWidth: strokeData.lineWidth // Backend envia espessura do mundo
-      };
-    });
+    console.log('FRONTEND: Recebendo desenho inicial:', data.strokes.length, 'traços');
+    strokes.value = data.strokes.map(strokeData => ({
+      points: strokeData.points,
+      color: strokeData.color,
+      lineWidth: strokeData.lineWidth
+    }));
     redraw();
   });
 
-  // Ouvir por novos traços de outros usuários
   socket.value.on('stroke_received', (strokeData) => {
-    console.log('Novo traço recebido:', strokeData);
-    // Adicionar o traço recebido à lista local
-    // O backend já deve ter salvo e está apenas retransmitindo
-    // A espessura da linha (lineWidth) já deve ser a espessura no "mundo"
+    console.log('FRONTEND: Novo traço recebido:', strokeData);
     strokes.value.push({
       points: strokeData.points,
       color: strokeData.color,
       lineWidth: strokeData.lineWidth
     });
-    redraw(); // Redesenha o canvas com o novo traço
+    redraw();
   });
 
-  // Ouvir por evento de limpar canvas
   socket.value.on('canvas_cleared', () => {
-    console.log('Evento de limpar canvas recebido do servidor.');
-    strokes.value = []; // Limpa os traços locais
+    console.log('FRONTEND: Evento de limpar canvas recebido do servidor.');
+    strokes.value = [];
     redraw();
   });
 });
@@ -139,113 +128,70 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', setupViewportAndWorld);
   if (socket.value) {
-    socket.value.disconnect(); // Desconectar ao sair do componente
+    socket.value.disconnect();
   }
 });
 
-
-// --- Inicialização, Redimensionamento e Redesenho ---
-
+// --- Funções de Setup, Desenho e Coordenadas (sem alterações nas lógicas centrais) ---
 function setupViewportAndWorld() {
   const canvas = viewportCanvasRef.value;
   if (!canvas) return;
-
-  // 1. Calcular dimensões da viewport mantendo a proporção
   const availableWidth = window.innerWidth;
   const availableHeight = window.innerHeight;
-
   let newViewportWidth = availableWidth;
   let newViewportHeight = availableWidth / TARGET_VIEWPORT_ASPECT_RATIO;
-
   if (newViewportHeight > availableHeight) {
     newViewportHeight = availableHeight;
     newViewportWidth = availableHeight * TARGET_VIEWPORT_ASPECT_RATIO;
   }
-
-  // Aplicar um pequeno padding visual se desejar, ou usar 100%
-  // Ex: Deixar 95% do espaço para ter uma pequena margem da borda da janela
-  const paddingFactor = 1.0; // 1.0 para usar todo o espaço calculado
-  viewportState.width = Math.floor(newViewportWidth * paddingFactor);
-  viewportState.height = Math.floor(newViewportHeight * paddingFactor);
-
-  // 2. Definir o tamanho do elemento canvas (viewport)
+  viewportState.width = Math.floor(newViewportWidth);
+  viewportState.height = Math.floor(newViewportHeight);
   canvas.width = viewportState.width;
   canvas.height = viewportState.height;
-
-  // 3. Obter contexto
   ctx = canvas.getContext('2d');
   if (!ctx) return;
-
-  // 4. Resetar a visualização do "mundo" dentro da nova viewport
   resetView();
 }
 
 function resetView() {
-  if (!ctx) return; // Garante que o contexto exista
+  if (!ctx) return;
   const scaleX = viewportState.width / WORLD_WIDTH;
   const scaleY = viewportState.height / WORLD_HEIGHT;
   viewportState.scale = Math.min(scaleX, scaleY) * 0.9;
-
   viewportState.offsetX = (viewportState.width - WORLD_WIDTH * viewportState.scale) / 2;
   viewportState.offsetY = (viewportState.height - WORLD_HEIGHT * viewportState.scale) / 2;
-
   redraw();
 }
 
 function redraw() {
   if (!ctx) return;
   const canvas = viewportCanvasRef.value;
-
-  // Limpa a viewport (com uma cor de fundo para a área fora do "mundo")
   ctx.fillStyle = '#777777'; 
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.save(); // Salva o estado do contexto da viewport (sem transformações)
-
-  // Aplica a transformação da viewport (pan e zoom)
+  ctx.save();
   ctx.translate(viewportState.offsetX, viewportState.offsetY);
   ctx.scale(viewportState.scale, viewportState.scale);
-
-  // Desenha o fundo do "mundo"
   ctx.fillStyle = WORLD_BACKGROUND_COLOR;
   ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
-  // --- Início da Seção de Clipping ---
-  ctx.save(); // Salva o estado do contexto transformado (antes de aplicar o clip)
+  ctx.save();
   ctx.beginPath();
-  ctx.rect(0, 0, WORLD_WIDTH, WORLD_HEIGHT); // Define o retângulo do mundo como caminho
-  ctx.clip(); // Define este caminho como a região de clipping
-
-  // Desenha todos os traços armazenados (agora serão clipados)
+  ctx.rect(0, 0, WORLD_WIDTH, WORLD_HEIGHT); 
+  ctx.clip(); 
   strokes.value.forEach(stroke => {
     if (stroke.points.length < 2) return;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.beginPath();
     ctx.strokeStyle = stroke.color;
-    ctx.lineWidth = stroke.lineWidth; // Esta já é a espessura ajustada para o "mundo"
+    ctx.lineWidth = stroke.lineWidth; 
     ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
     stroke.points.forEach(point => ctx.lineTo(point.x, point.y));
     ctx.stroke();
   });
-
-  ctx.restore(); // Remove a região de clipping, restaurando para o estado transformado
-  // --- Fim da Seção de Clipping ---
-
-  ctx.restore(); // Restaura para o estado original da viewport (sem transformações)
+  ctx.restore(); 
+  ctx.restore(); 
 }
 
-onMounted(() => {
-  setupViewportAndWorld(); // Configura o tamanho inicial e a visualização
-  window.addEventListener('resize', setupViewportAndWorld); // Reconfigura no redimensionamento da janela
-});
-
-onUnmounted(() => {
-  window.removeEventListener('resize', setupViewportAndWorld);
-});
-
-
-// --- Conversão de Coordenadas ---
 function screenToWorldCoordinates(screenX, screenY) {
   return {
     x: (screenX - viewportState.offsetX) / viewportState.scale,
@@ -253,37 +199,34 @@ function screenToWorldCoordinates(screenX, screenY) {
   };
 }
 
-// --- Manipuladores de Eventos de Desenho e Pan ---
+// --- Manipuladores de Eventos de Mouse (mantidos como na sua versão) ---
 function handleMouseDown(event) {
   menu.visible = false;
-  const canvas = viewportCanvasRef.value;
-  // Assegurar que o foco está no canvas para eventos de teclado, se necessário
-  // canvas.focus(); // Adicione tabindex="0" ao canvas no template se usar foco
-
-  if (event.button === 0) { // Botão esquerdo - Iniciar desenho
+  isDrawing = false; // Resetar isDrawing para interações de mouse
+  if (event.button === 0) {
     const { x, y } = screenToWorldCoordinates(event.offsetX, event.offsetY);
-	currentStroke = {
-	  points: [{ x, y }], // x, y já estão em coordenadas do mundo
-	  color: drawingSettings.color,
-	  lineWidth: drawingSettings.lineWidth, // Usa diretamente a configuração, sem dividir pela escala
-	};
+    currentStroke = {
+      points: [{ x, y }],
+      color: drawingSettings.color,
+      lineWidth: drawingSettings.lineWidth,
+    };
     strokes.value.push(currentStroke);
-    // Opcional: redesenhar imediatamente para ver o primeiro ponto
-    // redraw();
-  } else if (event.button === 1) { // Botão do meio (scroll click) - Iniciar Pan
+    isDrawing = true; // Mouse está desenhando
+    redraw(); // Para mostrar o primeiro ponto do mouse
+  } else if (event.button === 1) {
     event.preventDefault();
     viewportState.isPanning = true;
-    viewportState.lastPanX = event.clientX; // Usar clientX/Y para pan relativo à janela
+    viewportState.lastPanX = event.clientX;
     viewportState.lastPanY = event.clientY;
   }
 }
 
 function handleMouseMove(event) {
-  if (currentStroke && (event.buttons & 1)) { // Desenhando com botão esquerdo pressionado
+  if (isDrawing && currentStroke && (event.buttons & 1)) { // Verifica se o botão esquerdo está pressionado
     const { x, y } = screenToWorldCoordinates(event.offsetX, event.offsetY);
     currentStroke.points.push({ x, y });
     redraw();
-  } else if (viewportState.isPanning && (event.buttons & 4)) { // Pan com botão do meio pressionado
+  } else if (viewportState.isPanning && (event.buttons & 4)) {
     const dx = event.clientX - viewportState.lastPanX;
     const dy = event.clientY - viewportState.lastPanY;
     viewportState.offsetX += dx;
@@ -295,134 +238,115 @@ function handleMouseMove(event) {
 }
 
 function handleMouseUpOrOut(event) {
-  if (event.button === 0 && currentStroke && currentStroke.points.length > 1) {
-    // Emitir o traço completo para o servidor
-    if (socket.value) {
-      // currentStroke.lineWidth já é a espessura no "mundo"
+  if (event.button === 0 && currentStroke) { // Se estava desenhando com o botão esquerdo
+    if (currentStroke.points.length > 1 && socket.value) {
       socket.value.emit('draw_stroke_event', {
         points: currentStroke.points,
         color: currentStroke.color,
         lineWidth: currentStroke.lineWidth
       });
+    } else if (currentStroke.points.length <= 1) { // Remove ponto único se não arrastou
+        const index = strokes.value.indexOf(currentStroke);
+        if (index > -1) strokes.value.splice(index,1);
+        redraw();
     }
+    isDrawing = false;
   }
-  currentStroke = null; // Resetar o traço atual
+  currentStroke = null; // Resetar sempre, independente do botão
 
-  if (event.button === 1 || !(event.buttons & 4)) { // Pan
+  if (event.button === 1 || !(event.buttons & 4)) {
     viewportState.isPanning = false;
   }
 }
 
-// --- Manipulador de Zoom (Mouse Wheel) ---
 function handleWheel(event) {
   event.preventDefault();
-  const scaleAmountFactor = 1.1; // Fator de zoom mais suave
+  menu.visible = false; // Opcional: fechar menu no zoom
+  const scaleAmountFactor = 1.1;
   const mouseX_view = event.offsetX;
   const mouseY_view = event.offsetY;
-
   const worldP_before = screenToWorldCoordinates(mouseX_view, mouseY_view);
-
   let newScale = viewportState.scale;
-  if (event.deltaY < 0) { // Zoom In
+  if (event.deltaY < 0) {
     newScale *= scaleAmountFactor;
-  } else { // Zoom Out
+  } else {
     newScale /= scaleAmountFactor;
   }
-  // Limitar o zoom
-  newScale = Math.max(0.05, Math.min(newScale, 20)); // Exemplo de limites
-
+  newScale = Math.max(0.05, Math.min(newScale, 20));
   viewportState.scale = newScale;
-
   viewportState.offsetX = mouseX_view - worldP_before.x * viewportState.scale;
   viewportState.offsetY = mouseY_view - worldP_before.y * viewportState.scale;
-
   redraw();
 }
 
-// --- Manipuladores de Toque ---
-let touchCache = [];
-const DOUBLE_TAP_THRESHOLD = 300;
-let lastTapTime = 0;
-let initialPinchDistance = 0; // Para pinch zoom
-let initialTouchMidpoint = null; // Para two-finger pan
-
-function getTouchMidpoint(t1, t2, rect) {
-    return {
-        x: (t1.clientX - rect.left + t2.clientX - rect.left) / 2,
-        y: (t1.clientY - rect.top + t2.clientY - rect.top) / 2
-    };
-}
+// --- Manipuladores de Toque ATUALIZADOS COM DEPURAÇÃO DETALHADA ---
 
 function showContextMenuAt(screenX, screenY) {
-  // Cancela qualquer desenho em progresso se o menu de contexto for ativado
+  if (socket.value) socket.value.emit('debug_touch_event', { type: 'showContextMenuAt_Triggered', screenX, screenY, sid: socket.value.id });
   if (currentStroke) {
     const index = strokes.value.indexOf(currentStroke);
     if (index > -1 && currentStroke.points.length <= 1) {
-      // Se for apenas um ponto (toque sem arrastar significativo), remove da lista local
-      // pois não será um traço válido para emitir.
       strokes.value.splice(index, 1);
+       if (socket.value) socket.value.emit('debug_touch_event', { type: 'showContextMenuAt_RemovedSingleDotStroke', sid: socket.value.id });
     } else if (currentStroke.points.length > 1 && socket.value) {
-      // Se já era um traço válido (mais de 1 ponto), emite para o servidor
-      // antes de abrir o menu e cancelar o modo de desenho.
       socket.value.emit('draw_stroke_event', {
         points: currentStroke.points,
         color: currentStroke.color,
         lineWidth: currentStroke.lineWidth
       });
+      if (socket.value) socket.value.emit('debug_touch_event', { type: 'showContextMenuAt_EmittedStroke', points: currentStroke.points.length, sid: socket.value.id });
     }
-    currentStroke = null; // Limpa o traço atual, já que o menu será aberto
-    redraw(); // Atualiza o canvas se um traço de ponto único foi removido
+    currentStroke = null;
+    redraw();
   }
-  isDrawing = false; // Garante que o modo de desenho seja desativado
-
-  // Define a posição e visibilidade do menu
+  isDrawing = false;
   menu.x = screenX;
   menu.y = screenY;
   menu.visible = true;
 }
 
 function handleTouchStart(event) {
-  event.preventDefault(); // Prevenir comportamento padrão do navegador (scroll, zoom da página)
-  menu.visible = false;   // Esconder menu de contexto se estiver visível
+  event.preventDefault();
   const touches = event.touches;
   const rect = viewportCanvasRef.value.getBoundingClientRect();
   
-   if (socket.value) {
-    const touchDataForDebug = [];
-    for (let i = 0; i < touches.length; i++) {
-      touchDataForDebug.push({
-        id: touches[i].identifier,
-        clientX: touches[i].clientX,
-        clientY: touches[i].clientY,
-        target: touches[i].target?.toString() // Para ver o elemento alvo
-      });
-    }
+  // Envia dados de debug para o backend
+  if (socket.value) {
+    const touchDataForDebug = Array.from(touches).map(t => ({ id: t.identifier, clientX: t.clientX, clientY: t.clientY }));
     socket.value.emit('debug_touch_event', {
-      type: 'touchstart',
+      type: 'touchstart_ENTRY',
       touchesLength: touches.length,
       changedTouchesLength: event.changedTouches.length,
       touchData: touchDataForDebug,
-      userAgent: navigator.userAgent // Enviar User-Agent para identificar o dispositivo
+      userAgent: navigator.userAgent,
+      sid: socket.value.id
     });
   }
 
-  if (touches.length === 1) { // Um dedo tocando
+  menu.visible = false;
+  isDrawing = false; // Resetar isDrawing no início de cada touchstart
+
+  if (touches.length === 1) {
     isMultiTouching = false;
     const touch = touches[0];
     touchStartCoords = { x: touch.clientX, y: touch.clientY, time: Date.now() };
 
-    // Iniciar temporizador para toque longo (menu de contexto)
-    clearTimeout(longPressTimer); // Limpar qualquer temporizador anterior
+    clearTimeout(longPressTimer);
     longPressTimer = setTimeout(() => {
-      // Verifica se o dedo não se moveu muito e ainda é um único toque
       const currentTime = Date.now();
-      if (!isDrawing && !isMultiTouching && (currentTime - touchStartCoords.time) >= longPressDuration) {
+      const timeElapsed = currentTime - touchStartCoords.time;
+      // Verifica se o dedo ainda está na mesma posição aproximada (touchStartCoords é do início do toque)
+      // O importante é que o *movimento* em handleTouchMove cancela o timer.
+      // Aqui, só checamos se o timer de fato completou o tempo e se não estamos já em outro estado.
+      if (!isDrawing && !isMultiTouching && timeElapsed >= longPressDuration) {
+        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_LongPress_TimerFired', sid: socket.value.id });
         showContextMenuAt(touchStartCoords.x, touchStartCoords.y);
+      } else {
+        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_LongPress_TimerFired_ConditionsNotMet', isDrawing, isMultiTouching, timeElapsed, sid: socket.value.id });
       }
       longPressTimer = null;
     }, longPressDuration);
 
-    // Iniciar desenho
     const screenX = touch.clientX - rect.left;
     const screenY = touch.clientY - rect.top;
     const worldCoords = screenToWorldCoordinates(screenX, screenY);
@@ -430,55 +354,54 @@ function handleTouchStart(event) {
     currentStroke = {
       points: [worldCoords],
       color: drawingSettings.color,
-      lineWidth: drawingSettings.lineWidth, // Espessura no "mundo"
+      lineWidth: drawingSettings.lineWidth,
     };
-    strokes.value.push(currentStroke); // Adiciona localmente para feedback imediato
-    isDrawing = true;
-    redraw(); // Redesenha para mostrar o primeiro ponto
-  
-  } else if (touches.length === 2) { // Dois dedos tocando: prepara para pan/zoom
-    clearTimeout(longPressTimer); // Cancela o toque longo se o segundo dedo descer
-    longPressTimer = null;
-    isDrawing = false;          // Para de desenhar se estava com um dedo
-    isMultiTouching = true;
+    strokes.value.push(currentStroke);
+    isDrawing = true; // Definir que está desenhando
 
-    // Se havia um currentStroke de um dedo que acabou de se tornar um gesto de dois dedos,
-    // finalize-o se for válido, ou remova-o se for apenas um ponto.
-    if (currentStroke) {
+    if (socket.value) {
+      socket.value.emit('debug_touch_event', {
+        type: 'touchstart_SingleTouch_DrawingInitialized',
+        isDrawing_state: isDrawing,
+        currentStroke_points_length: currentStroke.points.length,
+        worldX: worldCoords.x, worldY: worldCoords.y,
+        sid: socket.value.id
+      });
+    }
+    redraw();
+  
+  } else if (touches.length >= 2) {
+    if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_MultiTouch_Initiated', isDrawing_before: isDrawing, currentStroke_exists_before: !!currentStroke, sid: socket.value.id, touches: touches.length });
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+    
+    if (isDrawing && currentStroke) { // Se estava desenhando com um dedo
         if (currentStroke.points.length > 1) {
             if (socket.value) {
-                socket.value.emit('draw_stroke_event', {
-                    points: currentStroke.points,
-                    color: currentStroke.color,
-                    lineWidth: currentStroke.lineWidth
-                });
+                socket.value.emit('draw_stroke_event', { points: currentStroke.points, color: currentStroke.color, lineWidth: currentStroke.lineWidth });
+                socket.value.emit('debug_touch_event', { type: 'touchstart_MultiTouch_FinalizedPriorSingleStroke', sid: socket.value.id });
             }
-        } else { // Apenas um ponto, remove
+        } else {
             const index = strokes.value.indexOf(currentStroke);
-            if (index > -1) {
-                strokes.value.splice(index, 1);
-            }
+            if (index > -1) strokes.value.splice(index, 1);
+            if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_MultiTouch_RemovedPriorSingleDot', sid: socket.value.id });
         }
-        currentStroke = null;
-        redraw(); // Atualiza para remover/finalizar o traço anterior
     }
-
+    isDrawing = false; // Para de desenhar
+    currentStroke = null; // Limpa o traço de um dedo
+    isMultiTouching = true;
 
     const t1 = touches[0];
     const t2 = touches[1];
-
     initialGestureInfo.pinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-    
     const screenMidX = (t1.clientX - rect.left + t2.clientX - rect.left) / 2;
     const screenMidY = (t1.clientY - rect.top + t2.clientY - rect.top) / 2;
-    initialGestureInfo.midpoint = { x: screenMidX, y: screenMidY }; // Ponto médio na tela
-    
-    // Ponto no mundo que está sob o ponto médio dos dedos NO INÍCIO do gesto
-    initialGestureInfo.worldMidpoint = screenToWorldCoordinates(screenMidX, screenY);
-    
+    initialGestureInfo.midpoint = { x: screenMidX, y: screenMidY };
+    initialGestureInfo.worldMidpoint = screenToWorldCoordinates(screenMidX, screenMidY); // Corrigido aqui
     initialGestureInfo.offsetX = viewportState.offsetX;
     initialGestureInfo.offsetY = viewportState.offsetY;
     initialGestureInfo.scale = viewportState.scale;
+    redraw(); // Para caso um traço anterior tenha sido removido
   }
 }
 
@@ -486,184 +409,172 @@ function handleTouchMove(event) {
   event.preventDefault();
   const touches = event.touches;
   const rect = viewportCanvasRef.value.getBoundingClientRect();
-  
-   if (socket.value && touches.length > 0) { // Só envia se houver toques ativos
-    const touchDataForDebug = [];
-    for (let i = 0; i < touches.length; i++) {
-      touchDataForDebug.push({
-        id: touches[i].identifier,
-        clientX: touches[i].clientX,
-        clientY: touches[i].clientY,
-      });
-    }
+
+  if (socket.value && touches.length > 0) {
+    const touchDataForDebug = Array.from(touches).map(t => ({ id: t.identifier, clientX: t.clientX, clientY: t.clientY }));
     socket.value.emit('debug_touch_event', {
-      type: 'touchmove',
+      type: 'touchmove_ENTRY',
       touchesLength: touches.length,
+      isDrawing_state: isDrawing,
+      isMultiTouching_state: isMultiTouching,
+      currentStroke_exists: !!currentStroke,
+      longPressTimer_active: !!longPressTimer,
+      sid: socket.value.id,
       touchData: touchDataForDebug
     });
   }
 
-
-  if (touches.length === 1 && !isMultiTouching) { // Mover com um dedo
+  if (touches.length === 1 && !isMultiTouching) {
     const touch = touches[0];
     const screenX = touch.clientX - rect.left;
     const screenY = touch.clientY - rect.top;
 
-    // Se o temporizador de toque longo ainda estiver ativo, verifica se o dedo moveu demais
     if (longPressTimer) {
       const deltaX = touch.clientX - touchStartCoords.x;
       const deltaY = touch.clientY - touchStartCoords.y;
       if (Math.hypot(deltaX, deltaY) > longPressMoveThreshold) {
-        clearTimeout(longPressTimer); // Cancela o toque longo
+        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_SingleTouch_LongPressCancelledByMove', sid: socket.value.id });
+        clearTimeout(longPressTimer);
         longPressTimer = null;
       }
     }
 
-    // Se estiver no modo de desenho e não esperando por toque longo
-    if (isDrawing && currentStroke && !longPressTimer) {
+    // Permite desenhar se isDrawing é true, currentStroke existe, e
+    // ou o longPressTimer foi cancelado/expirado, ou ainda não atingiu a duração do longPress.
+    if (isDrawing && currentStroke && (!longPressTimer || (Date.now() - touchStartCoords.time < longPressDuration))) {
       const worldCoords = screenToWorldCoordinates(screenX, screenY);
       currentStroke.points.push(worldCoords);
+      if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_SingleTouch_PointAdded', points: currentStroke.points.length, sid: socket.value.id });
       redraw();
+    } else if (touches.length === 1 && socket.value) { // Loga por que não desenhou
+        socket.value.emit('debug_touch_event', {
+            type: 'touchmove_SingleTouch_NoDrawConditionMet',
+            isDrawing_state: isDrawing,
+            currentStroke_exists: !!currentStroke,
+            longPressTimer_active: !!longPressTimer,
+            timeSinceTouchStart: Date.now() - touchStartCoords.time,
+            longPressDuration: longPressDuration,
+            sid: socket.value.id
+        });
     }
-
-  } else if (touches.length === 2 && isMultiTouching) { // Mover com dois dedos (pan/zoom)
-    // Garante que o toque longo seja cancelado
+  } else if (touches.length >= 2 && isMultiTouching) {
+    if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_MultiTouch_Processing', sid: socket.value.id, touches: touches.length });
     if (longPressTimer) {
         clearTimeout(longPressTimer);
         longPressTimer = null;
     }
-    isDrawing = false; // Não está desenhando ao fazer gesto de pan/zoom
+    isDrawing = false; 
 
     const t1 = touches[0];
     const t2 = touches[1];
-
     const currentScreenMidX = (t1.clientX - rect.left + t2.clientX - rect.left) / 2;
     const currentScreenMidY = (t1.clientY - rect.top + t2.clientY - rect.top) / 2;
     
-    // --- Pan ---
-    // O pan é a diferença entre o ponto médio inicial dos dedos (em coordenadas de tela)
-    // e o ponto médio atual, adicionado ao offset inicial da viewport.
-    const deltaMidX = currentScreenMidX - initialGestureInfo.midpoint.x;
-    const deltaMidY = currentScreenMidY - initialGestureInfo.midpoint.y;
-    
-    viewportState.offsetX = initialGestureInfo.offsetX + deltaMidX;
-    viewportState.offsetY = initialGestureInfo.offsetY + deltaMidY;
-
-    // --- Zoom (Pinch) ---
     const currentPinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
     let scaleFactor = 1;
-    if (initialGestureInfo.pinchDistance > 0) { // Evita divisão por zero
+    if (initialGestureInfo.pinchDistance > 0) {
       scaleFactor = currentPinchDistance / initialGestureInfo.pinchDistance;
     }
-    
     let newScale = initialGestureInfo.scale * scaleFactor;
-    newScale = Math.max(0.05, Math.min(newScale, 20)); // Limita o zoom
-
-    // Para dar zoom em relação ao ponto médio dos dedos:
-    // O ponto do "mundo" que estava sob o ponto médio inicial dos dedos
-    // deve permanecer sob o ponto médio atual dos dedos após o novo zoom.
+    newScale = Math.max(0.05, Math.min(newScale, 20));
+    
+    viewportState.scale = newScale; // Aplica a nova escala primeiro
+    
+    // O ponto do mundo que estava sob o ponto médio inicial dos dedos deve
+    // agora estar sob o ponto médio ATUAL dos dedos.
+    // offsetX_novo = midScreenX_atual - worldMidX_inicial * escala_nova
     viewportState.offsetX = currentScreenMidX - initialGestureInfo.worldMidpoint.x * newScale;
     viewportState.offsetY = currentScreenMidY - initialGestureInfo.worldMidpoint.y * newScale;
-    viewportState.scale = newScale;
-
+    
     redraw();
-  }
-}
-
-
-function removeTouchFromCache(touchIdentifier) {
-  const index = touchCache.findIndex(t => t.identifier === touchIdentifier);
-  if (index !== -1) {
-    touchCache.splice(index, 1);
   }
 }
 
 function handleTouchEnd(event) {
   event.preventDefault();
-  clearTimeout(longPressTimer); // Sempre limpa o temporizador de toque longo
-  longPressTimer = null;
-
-  const touchesStillOnScreen = event.touches.length;
   
-   if (socket.value) {
-    const touchDataForDebug = [];
-    for (let i = 0; i < changedTouches.length; i++) {
-      touchDataForDebug.push({
-        id: changedTouches[i].identifier,
-        clientX: changedTouches[i].clientX,
-        clientY: changedTouches[i].clientY,
-      });
-    }
+  // Envia dados de debug para o backend
+  if (socket.value) {
+    const touchDataForDebug = Array.from(event.changedTouches).map(t => ({ id: t.identifier, clientX: t.clientX, clientY: t.clientY }));
     socket.value.emit('debug_touch_event', {
-      type: 'touchend',
-      touchesLength: touches.length, // Quantos dedos ainda estão na tela
-      changedTouchesLength: changedTouches.length, // Quantos dedos foram levantados
-      touchData: touchDataForDebug // Dados dos dedos levantados
+      type: 'touchend_ENTRY',
+      touchesLength: event.touches.length, // Dedos que AINDA ESTÃO na tela
+      changedTouchesLength: event.changedTouches.length, // Dedos que foram LEVANTADOS
+      touchData: touchDataForDebug,
+      isDrawing_state_before_logic: isDrawing,
+      isMultiTouching_state_before_logic: isMultiTouching,
+      currentStroke_exists_before_logic: !!currentStroke,
+      sid: socket.value.id
     });
   }
 
-  // Se um traço estava sendo desenhado (isDrawing era true) e era um toque único
-  if (isDrawing && currentStroke && !isMultiTouching) {
-    if (currentStroke.points.length > 1) { // Só emite se for mais que um ponto
+  clearTimeout(longPressTimer);
+  longPressTimer = null;
+
+  if (isDrawing && currentStroke && !isMultiTouching) { // Estava desenhando com um dedo e esse dedo foi levantado
+    if (currentStroke.points.length > 1) {
       if (socket.value) {
         socket.value.emit('draw_stroke_event', {
           points: currentStroke.points,
           color: currentStroke.color,
           lineWidth: currentStroke.lineWidth
         });
+        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchend_EmittedDrawEvent', points: currentStroke.points.length, sid: socket.value.id });
       }
     } else {
-      // Se for apenas um ponto (clique/toque rápido sem mover), remove da lista local
       const index = strokes.value.indexOf(currentStroke);
       if (index > -1) {
         strokes.value.splice(index, 1);
       }
-      redraw(); // Para limpar o ponto único da tela
+      if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchend_RemovedSingleDotStroke', sid: socket.value.id });
+      redraw(); 
     }
   }
-
-  // Reseta o estado de desenho/gesto se não houver mais dedos ou se voltar para um dedo
-  if (touchesStillOnScreen < 2) {
+  
+  // Resetar estados
+  if (event.touches.length < 2) { // Se menos de dois dedos restantes
     isMultiTouching = false;
-    // Se ainda houver um dedo, e não estávamos fazendo multi-touch,
-    // o próximo touchstart tratará como um novo toque único.
+    if (socket.value && isMultiTouching) socket.value.emit('debug_touch_event', { type: 'touchend_Reset_isMultiTouching_to_false', sid: socket.value.id });
   }
-  if (touchesStillOnScreen < 1) {
+  if (event.touches.length < 1) { // Se nenhum dedo restante
     isDrawing = false;
-    currentStroke = null;
+    if (socket.value && isDrawing) socket.value.emit('debug_touch_event', { type: 'touchend_Reset_isDrawing_to_false', sid: socket.value.id });
   }
-  // Se estávamos em multi-touch e agora temos 1 dedo, o próximo touchstart/move de 1 dedo reiniciará.
-  // Ou, se estávamos em multi-touch e agora temos 0 dedos, tudo é resetado.
+  // currentStroke só deve ser resetado se o traço terminou ou foi invalidado.
+  // Se ainda há toques (ex: um dedo levantou de um gesto de dois dedos), não necessariamente reseta currentStroke
+  // a menos que isDrawing também se torne false.
+  if (!isDrawing) {
+      currentStroke = null;
+  }
 }
 
-// --- Funções do Menu de Contexto ---
+
+// --- Funções do Menu de Contexto (mantidas como na sua versão) ---
 function showContextMenu(event) {
   menu.x = event.clientX;
   menu.y = event.clientY;
   menu.visible = true;
 }
 
-function clearStrokes() {
+function clearStrokes() { // Renomeada para consistência, chamada pelo menu
   strokes.value = [];
   redraw();
+  if (socket.value) { // Notificar o servidor sobre a limpeza
+    socket.value.emit('clear_canvas_event', {});
+  }
 }
 
 function handleMenuSelection(action, value) {
-  menu.visible = false; // Esconde o menu após a seleção
+  menu.visible = false;
   switch (action) {
     case 'clear':
-      // Limpa localmente e emite para o servidor
-      strokes.value = [];
-      redraw();
-      if (socket.value) {
-        socket.value.emit('clear_canvas_event', {}); // Envia objeto vazio ou ID do quadro
-      }
+      clearStrokes(); // Chama a função de limpeza
       break;
     case 'setColor':
       drawingSettings.color = value;
       break;
     case 'setThickness':
-      drawingSettings.lineWidth = value; // Este é o novo valor para espessura no mundo
+      drawingSettings.lineWidth = value;
       break;
     case 'resetView':
       resetView();
