@@ -49,6 +49,7 @@ const viewportState = reactive({
 const strokes = ref([]);
 let currentStroke = null;
 let isDrawing = false; // Adicionado para controlar o estado de desenho
+let potentialDrawingStart = false;
 
 const drawingSettings = reactive({
   color: 'black',
@@ -283,23 +284,19 @@ function handleWheel(event) {
 
 function showContextMenuAt(screenX, screenY) {
   if (socket.value) socket.value.emit('debug_touch_event', { type: 'showContextMenuAt_Triggered', screenX, screenY, sid: socket.value.id });
+  
+  potentialDrawingStart = false;
+
   if (currentStroke) {
     const index = strokes.value.indexOf(currentStroke);
-    if (index > -1 && currentStroke.points.length <= 1) {
+    if (index > -1) {
       strokes.value.splice(index, 1);
-       if (socket.value) socket.value.emit('debug_touch_event', { type: 'showContextMenuAt_RemovedSingleDotStroke', sid: socket.value.id });
-    } else if (currentStroke.points.length > 1 && socket.value) {
-      socket.value.emit('draw_stroke_event', {
-        points: currentStroke.points,
-        color: currentStroke.color,
-        lineWidth: currentStroke.lineWidth
-      });
-      if (socket.value) socket.value.emit('debug_touch_event', { type: 'showContextMenuAt_EmittedStroke', points: currentStroke.points.length, sid: socket.value.id });
+      if (socket.value) socket.value.emit('debug_touch_event', { type: 'showContextMenuAt_ClearedSpeculativeStroke', sid: socket.value.id });
     }
     currentStroke = null;
-    redraw();
   }
   isDrawing = false;
+
   menu.x = screenX;
   menu.y = screenY;
   menu.visible = true;
@@ -310,85 +307,66 @@ function handleTouchStart(event) {
   const touches = event.touches;
   const rect = viewportCanvasRef.value.getBoundingClientRect();
   
-  // Envia dados de debug para o backend
   if (socket.value) {
     const touchDataForDebug = Array.from(touches).map(t => ({ id: t.identifier, clientX: t.clientX, clientY: t.clientY }));
     socket.value.emit('debug_touch_event', {
       type: 'touchstart_ENTRY',
       touchesLength: touches.length,
-      changedTouchesLength: event.changedTouches.length,
-      touchData: touchDataForDebug,
       userAgent: navigator.userAgent,
+      touchData: touchDataForDebug,
       sid: socket.value.id
     });
   }
 
   menu.visible = false;
-  isDrawing = false; // Resetar isDrawing no início de cada touchstart
-
+  
   if (touches.length === 1) {
     isMultiTouching = false;
+    isDrawing = false;
+    currentStroke = null;
+    potentialDrawingStart = true;
+
     const touch = touches[0];
     touchStartCoords = { x: touch.clientX, y: touch.clientY, time: Date.now() };
 
     clearTimeout(longPressTimer);
     longPressTimer = setTimeout(() => {
-      const currentTime = Date.now();
-      const timeElapsed = currentTime - touchStartCoords.time;
-      // Verifica se o dedo ainda está na mesma posição aproximada (touchStartCoords é do início do toque)
-      // O importante é que o *movimento* em handleTouchMove cancela o timer.
-      // Aqui, só checamos se o timer de fato completou o tempo e se não estamos já em outro estado.
-      if (!isDrawing && !isMultiTouching && timeElapsed >= longPressDuration) {
-        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_LongPress_TimerFired', sid: socket.value.id });
+      if (potentialDrawingStart && !isMultiTouching) { // Só dispara se ainda for um candidato a toque longo
+        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_LongPress_TimerFired_Successfully', sid: socket.value.id });
         showContextMenuAt(touchStartCoords.x, touchStartCoords.y);
+        // showContextMenuAt já define potentialDrawingStart = false e isDrawing = false
       } else {
-        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_LongPress_TimerFired_ConditionsNotMet', isDrawing, isMultiTouching, timeElapsed, sid: socket.value.id });
+        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_LongPress_TimerFired_But_Invalidated', potentialDrawingStart, isMultiTouching, sid: socket.value.id });
       }
       longPressTimer = null;
     }, longPressDuration);
 
-    const screenX = touch.clientX - rect.left;
-    const screenY = touch.clientY - rect.top;
-    const worldCoords = screenToWorldCoordinates(screenX, screenY);
-    
-    currentStroke = {
-      points: [worldCoords],
-      color: drawingSettings.color,
-      lineWidth: drawingSettings.lineWidth,
-    };
-    strokes.value.push(currentStroke);
-    isDrawing = true; // Definir que está desenhando
-
     if (socket.value) {
       socket.value.emit('debug_touch_event', {
-        type: 'touchstart_SingleTouch_DrawingInitialized',
-        isDrawing_state: isDrawing,
-        currentStroke_points_length: currentStroke.points.length,
-        worldX: worldCoords.x, worldY: worldCoords.y,
+        type: 'touchstart_SingleTouch_PotentialStartSet',
+        coords: { x: touch.clientX, y: touch.clientY },
+        potentialDrawingStart_state: potentialDrawingStart,
         sid: socket.value.id
       });
     }
-    redraw();
   
   } else if (touches.length >= 2) {
-    if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_MultiTouch_Initiated', isDrawing_before: isDrawing, currentStroke_exists_before: !!currentStroke, sid: socket.value.id, touches: touches.length });
+    if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_MultiTouch_Initiated', sid: socket.value.id, touches: touches.length });
+    
     clearTimeout(longPressTimer);
     longPressTimer = null;
-    
-    if (isDrawing && currentStroke) { // Se estava desenhando com um dedo
-        if (currentStroke.points.length > 1) {
-            if (socket.value) {
-                socket.value.emit('draw_stroke_event', { points: currentStroke.points, color: currentStroke.color, lineWidth: currentStroke.lineWidth });
-                socket.value.emit('debug_touch_event', { type: 'touchstart_MultiTouch_FinalizedPriorSingleStroke', sid: socket.value.id });
-            }
-        } else {
+    potentialDrawingStart = false; // Não é mais um candidato a desenho de um dedo
+
+    if (isDrawing && currentStroke) {
+        if (currentStroke.points.length > 1 && socket.value) {
+            socket.value.emit('draw_stroke_event', { points: currentStroke.points, color: currentStroke.color, lineWidth: currentStroke.lineWidth });
+        } else if(currentStroke) {
             const index = strokes.value.indexOf(currentStroke);
             if (index > -1) strokes.value.splice(index, 1);
-            if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchstart_MultiTouch_RemovedPriorSingleDot', sid: socket.value.id });
         }
     }
-    isDrawing = false; // Para de desenhar
-    currentStroke = null; // Limpa o traço de um dedo
+    isDrawing = false; 
+    currentStroke = null;
     isMultiTouching = true;
 
     const t1 = touches[0];
@@ -397,11 +375,11 @@ function handleTouchStart(event) {
     const screenMidX = (t1.clientX - rect.left + t2.clientX - rect.left) / 2;
     const screenMidY = (t1.clientY - rect.top + t2.clientY - rect.top) / 2;
     initialGestureInfo.midpoint = { x: screenMidX, y: screenMidY };
-    initialGestureInfo.worldMidpoint = screenToWorldCoordinates(screenMidX, screenMidY); // Corrigido aqui
+    initialGestureInfo.worldMidpoint = screenToWorldCoordinates(screenMidX, screenMidY);
     initialGestureInfo.offsetX = viewportState.offsetX;
     initialGestureInfo.offsetY = viewportState.offsetY;
     initialGestureInfo.scale = viewportState.scale;
-    redraw(); // Para caso um traço anterior tenha sido removido
+    redraw();
   }
 }
 
@@ -419,6 +397,7 @@ function handleTouchMove(event) {
       isMultiTouching_state: isMultiTouching,
       currentStroke_exists: !!currentStroke,
       longPressTimer_active: !!longPressTimer,
+      potentialDrawingStart_state: potentialDrawingStart,
       sid: socket.value.id,
       touchData: touchDataForDebug
     });
@@ -429,47 +408,79 @@ function handleTouchMove(event) {
     const screenX = touch.clientX - rect.left;
     const screenY = touch.clientY - rect.top;
 
-    if (longPressTimer) {
+    if (potentialDrawingStart) { // Se era um candidato a desenho/toque longo
       const deltaX = touch.clientX - touchStartCoords.x;
       const deltaY = touch.clientY - touchStartCoords.y;
+
       if (Math.hypot(deltaX, deltaY) > longPressMoveThreshold) {
-        if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_SingleTouch_LongPressCancelledByMove', sid: socket.value.id });
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
+        // Moveu o suficiente: é um desenho, cancela o toque longo.
+        if (longPressTimer) {
+          if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_SingleTouch_LongPressCancelledByMove', sid: socket.value.id });
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+        
+        if (!isDrawing) { // Se o desenho ainda não começou oficialmente
+          isDrawing = true; // Começa a desenhar AGORA
+          potentialDrawingStart = false; // Não é mais "potencial"
+          
+          // Usa as coordenadas INICIAIS do toque para o primeiro ponto do traço
+          const initialWorldCoords = screenToWorldCoordinates(touchStartCoords.x - rect.left, touchStartCoords.y - rect.top);
+          currentStroke = {
+            points: [initialWorldCoords],
+            color: drawingSettings.color,
+            lineWidth: drawingSettings.lineWidth,
+          };
+          strokes.value.push(currentStroke);
+          if (socket.value) {
+            socket.value.emit('debug_touch_event', {
+              type: 'touchmove_SingleTouch_DrawingActuallyStarted',
+              isDrawing_state: isDrawing,
+              worldX: initialWorldCoords.x, worldY: initialWorldCoords.y,
+              sid: socket.value.id
+            });
+          }
+          // Adiciona o ponto ATUAL também, já que houve movimento
+          const currentWorldCoords = screenToWorldCoordinates(screenX, screenY);
+          currentStroke.points.push(currentWorldCoords);
+          redraw();
+        }
       }
     }
-
-    // Permite desenhar se isDrawing é true, currentStroke existe, e
-    // ou o longPressTimer foi cancelado/expirado, ou ainda não atingiu a duração do longPress.
-    if (isDrawing && currentStroke && (!longPressTimer || (Date.now() - touchStartCoords.time < longPressDuration))) {
+    
+    // Se o desenho já começou (isDrawing é true)
+    if (isDrawing && currentStroke) {
+      // Só adiciona o ponto se não for o primeiro ponto já adicionado ao iniciar o desenho no move
+      // ou se a lógica acima já não adicionou o ponto atual.
+      // Para simplificar: se isDrawing e currentStroke, adiciona o ponto atual.
+      // A lógica de não duplicar o primeiro ponto pode ser refinada se necessário.
       const worldCoords = screenToWorldCoordinates(screenX, screenY);
-      currentStroke.points.push(worldCoords);
-      if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_SingleTouch_PointAdded', points: currentStroke.points.length, sid: socket.value.id });
+      // Evitar pontos duplicados se o movimento for mínimo e já adicionado
+      const lastPoint = currentStroke.points[currentStroke.points.length -1];
+      if (!lastPoint || lastPoint.x !== worldCoords.x || lastPoint.y !== worldCoords.y) {
+          currentStroke.points.push(worldCoords);
+      }
+
+      if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_SingleTouch_PointAddedToStroke', points: currentStroke.points.length, sid: socket.value.id });
       redraw();
-    } else if (touches.length === 1 && socket.value) { // Loga por que não desenhou
-        socket.value.emit('debug_touch_event', {
-            type: 'touchmove_SingleTouch_NoDrawConditionMet',
-            isDrawing_state: isDrawing,
-            currentStroke_exists: !!currentStroke,
-            longPressTimer_active: !!longPressTimer,
-            timeSinceTouchStart: Date.now() - touchStartCoords.time,
-            longPressDuration: longPressDuration,
-            sid: socket.value.id
-        });
+    } else if (touches.length === 1 && !isDrawing && !potentialDrawingStart && socket.value ) {
+        // Caso onde moveu, mas não está desenhando e não é um potencial começo (ex: menu já abriu)
+        socket.value.emit('debug_touch_event', { type: 'touchmove_SingleTouch_MoveIgnored_NotDrawingNotPotential', sid: socket.value.id });
     }
+
   } else if (touches.length >= 2 && isMultiTouching) {
     if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchmove_MultiTouch_Processing', sid: socket.value.id, touches: touches.length });
-    if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-    }
-    isDrawing = false; 
+    
+    clearTimeout(longPressTimer); // Garante que o toque longo é cancelado
+    longPressTimer = null;
+    potentialDrawingStart = false; // Não é um início de desenho de um dedo
+    isDrawing = false; // Não está desenhando
 
+    // ... (sua lógica de pan/zoom com initialGestureInfo como antes) ...
     const t1 = touches[0];
     const t2 = touches[1];
     const currentScreenMidX = (t1.clientX - rect.left + t2.clientX - rect.left) / 2;
     const currentScreenMidY = (t1.clientY - rect.top + t2.clientY - rect.top) / 2;
-    
     const currentPinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
     let scaleFactor = 1;
     if (initialGestureInfo.pinchDistance > 0) {
@@ -477,41 +488,39 @@ function handleTouchMove(event) {
     }
     let newScale = initialGestureInfo.scale * scaleFactor;
     newScale = Math.max(0.05, Math.min(newScale, 20));
-    
-    viewportState.scale = newScale; // Aplica a nova escala primeiro
-    
-    // O ponto do mundo que estava sob o ponto médio inicial dos dedos deve
-    // agora estar sob o ponto médio ATUAL dos dedos.
-    // offsetX_novo = midScreenX_atual - worldMidX_inicial * escala_nova
+    viewportState.scale = newScale;
     viewportState.offsetX = currentScreenMidX - initialGestureInfo.worldMidpoint.x * newScale;
     viewportState.offsetY = currentScreenMidY - initialGestureInfo.worldMidpoint.y * newScale;
-    
     redraw();
   }
 }
 
 function handleTouchEnd(event) {
   event.preventDefault();
-  
-  // Envia dados de debug para o backend
+  const changedTouches = event.changedTouches; // Dedos que foram levantados
+  const touchesStillOnScreen = event.touches.length; // Dedos que ainda estão na tela
+
   if (socket.value) {
-    const touchDataForDebug = Array.from(event.changedTouches).map(t => ({ id: t.identifier, clientX: t.clientX, clientY: t.clientY }));
+    const changedTouchData = Array.from(changedTouches).map(t => ({ id: t.identifier, clientX: t.clientX, clientY: t.clientY }));
     socket.value.emit('debug_touch_event', {
       type: 'touchend_ENTRY',
-      touchesLength: event.touches.length, // Dedos que AINDA ESTÃO na tela
-      changedTouchesLength: event.changedTouches.length, // Dedos que foram LEVANTADOS
-      touchData: touchDataForDebug,
-      isDrawing_state_before_logic: isDrawing,
-      isMultiTouching_state_before_logic: isMultiTouching,
-      currentStroke_exists_before_logic: !!currentStroke,
+      touchesOnScreen: touchesStillOnScreen,
+      changedTouches: changedTouches.length,
+      changedTouchData: changedTouchData,
+      isDrawing_state: isDrawing,
+      isMultiTouching_state: isMultiTouching,
+      currentStroke_exists: !!currentStroke,
+      potentialDrawingStart_state: potentialDrawingStart,
       sid: socket.value.id
     });
   }
 
-  clearTimeout(longPressTimer);
+  clearTimeout(longPressTimer); // Sempre limpa o timer de toque longo
   longPressTimer = null;
 
-  if (isDrawing && currentStroke && !isMultiTouching) { // Estava desenhando com um dedo e esse dedo foi levantado
+  // Verifica se um dedo foi levantado e se era um toque de desenho (não multi-touch)
+  if (isDrawing && currentStroke && !isMultiTouching && changedTouches.length > 0) {
+    // Assumimos que o changedTouch é o que estava desenhando
     if (currentStroke.points.length > 1) {
       if (socket.value) {
         socket.value.emit('draw_stroke_event', {
@@ -521,30 +530,31 @@ function handleTouchEnd(event) {
         });
         if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchend_EmittedDrawEvent', points: currentStroke.points.length, sid: socket.value.id });
       }
-    } else {
+    } else if (currentStroke) { // Era um toque curto (tap) que não virou desenho
       const index = strokes.value.indexOf(currentStroke);
       if (index > -1) {
         strokes.value.splice(index, 1);
       }
-      if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchend_RemovedSingleDotStroke', sid: socket.value.id });
+      if (socket.value) socket.value.emit('debug_touch_event', { type: 'touchend_RemovedSingleDotStroke_TapEnd', sid: socket.value.id });
       redraw(); 
     }
   }
   
-  // Resetar estados
-  if (event.touches.length < 2) { // Se menos de dois dedos restantes
+  potentialDrawingStart = false; // Resetar para o próximo toque
+
+  // Atualiza estados com base nos dedos restantes
+  if (touchesStillOnScreen < 2) {
+    if (isMultiTouching && socket.value) socket.value.emit('debug_touch_event', { type: 'touchend_Reset_isMultiTouching_to_false', sid: socket.value.id });
     isMultiTouching = false;
-    if (socket.value && isMultiTouching) socket.value.emit('debug_touch_event', { type: 'touchend_Reset_isMultiTouching_to_false', sid: socket.value.id });
   }
-  if (event.touches.length < 1) { // Se nenhum dedo restante
+  if (touchesStillOnScreen < 1) {
+    if (isDrawing && socket.value) socket.value.emit('debug_touch_event', { type: 'touchend_Reset_isDrawing_to_false', sid: socket.value.id });
     isDrawing = false;
-    if (socket.value && isDrawing) socket.value.emit('debug_touch_event', { type: 'touchend_Reset_isDrawing_to_false', sid: socket.value.id });
-  }
-  // currentStroke só deve ser resetado se o traço terminou ou foi invalidado.
-  // Se ainda há toques (ex: um dedo levantou de um gesto de dois dedos), não necessariamente reseta currentStroke
-  // a menos que isDrawing também se torne false.
-  if (!isDrawing) {
-      currentStroke = null;
+    currentStroke = null;
+  } else if (touchesStillOnScreen === 1 && isMultiTouching) {
+      // Se estava em multi-touch e sobrou um dedo, não necessariamente começa a desenhar.
+      // O próximo touchstart desse dedo decidirá. Resetamos isMultiTouching.
+      // isDrawing já deve ser false.
   }
 }
 
