@@ -35,15 +35,27 @@ Houve etapas significativas de depuração e refinamento, especialmente para:
 - Implementar o carregamento do estado do desenho ao conectar/recarregar a página.  
 
 #### Tecnologias
+**Frontend:**
+- [Vue.js](https://vuejs.org/)
+- [Vite](https://vitejs.dev/)
+- [Socket.IO Client](https://socket.io/docs/v4/client-api/)
 
-- HTML  
-- CSS  
-- JavaScript
-- Vite
-- Vue
-- SQLAlchemy
-- Flask
-- [Gemini](https://gemini.google.com/)
+**Backend:**
+- [Flask](https://flask.palletsprojects.com/)
+- [Flask-SocketIO](https://flask-socketio.readthedocs.io/)
+- [SQLAlchemy](https://www.sqlalchemy.org/)
+- [Flask-SQLAlchemy](https://flask-sqlalchemy.palletsprojects.com/)
+- [Flask-Migrate](https://flask-migrate.readthedocs.io/)
+- [psycopg2](https://www.psycopg.org/)
+- [Gunicorn](https://gunicorn.org/)
+- [gevent](http://www.gevent.org/)
+
+**Base de Dados:**
+- [PostgreSQL](https://www.postgresql.org/)
+
+**Plataformas de Hospedagem:**
+- [GitHub Pages](https://pages.github.com/)
+- [Render](https://render.com/)
 
 #### Ambiente de desenvolvimento
 
@@ -52,8 +64,9 @@ Houve etapas significativas de depuração e refinamento, especialmente para:
 
 #### Referências e créditos
 
-- Documentação da [API wger](https://wger.de/pt-br/software/api)  
-- Exploração do [site wger](https://wger.de/pt-br/exercise/overview/), para verificar como algumas requisições eram feitas
-- [Gemini](https://gemini.google.com/) para criar códigos que seriam repetitivos, otimizar e limpar o código
+- [Flask-SocketIO](https://flask-socketio.readthedocs.io/): Extensão Flask para adicionar suporte a WebSockets usando Socket.IO
+- [gevent](http://www.gevent.org/): Um framework de rede baseado em corrotinas para Python (usado como worker do Gunicorn para Socket.IO)
+- [Flask-Migrate](https://flask-migrate.readthedocs.io/): Extensão Flask para lidar com migrações de banco de dados SQLAlchemy 
+- [Gemini](https://gemini.google.com/) criação de códigos repetitivos, ajuda com novas técnologias, debug e otimização.
 
 Projeto entregue para a disciplina de [Desenvolvimento de Software para a Web](http://github.com/andreainfufsm/elc1090-2025a) em 2025a
