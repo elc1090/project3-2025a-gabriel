@@ -62,6 +62,21 @@ const menu = reactive({
   y: 0,
 });
 
+const longPressDuration = 1000; // ms para o toque longo
+let longPressTimer = null;
+let touchStartCoords = { x: 0, y: 0, time: 0 }; // Para detectar movimento e tempo do toque longo
+const longPressMoveThreshold = 10; // Pixels que o dedo pode mover antes de cancelar o toque longo
+
+let isMultiTouching = false;      // Flag para indicar se estamos em um gesto de múltiplos toques (pan/zoom)
+let initialGestureInfo = {      // Para armazenar o estado inicial de um gesto de dois dedos
+  pinchDistance: 0,
+  midpoint: { x: 0, y: 0 },   // Ponto médio na tela
+  worldMidpoint: { x: 0, y: 0}, // Ponto médio no mundo
+  offsetX: 0,                 // viewportState.offsetX inicial
+  offsetY: 0,                 // viewportState.offsetY inicial
+  scale: 1,                   // viewportState.scale inicial
+};
+
 // --- Ciclo de Vida e Conexão Socket.IO ---
 onMounted(() => {
   setupViewportAndWorld(); // Configura o tamanho inicial e a visualização
@@ -338,108 +353,187 @@ function getTouchMidpoint(t1, t2, rect) {
     };
 }
 
+function showContextMenuAt(screenX, screenY) {
+  // Cancela qualquer desenho em progresso se o menu de contexto for ativado
+  if (currentStroke) {
+    const index = strokes.value.indexOf(currentStroke);
+    if (index > -1 && currentStroke.points.length <= 1) {
+      // Se for apenas um ponto (toque sem arrastar significativo), remove da lista local
+      // pois não será um traço válido para emitir.
+      strokes.value.splice(index, 1);
+    } else if (currentStroke.points.length > 1 && socket.value) {
+      // Se já era um traço válido (mais de 1 ponto), emite para o servidor
+      // antes de abrir o menu e cancelar o modo de desenho.
+      socket.value.emit('draw_stroke_event', {
+        points: currentStroke.points,
+        color: currentStroke.color,
+        lineWidth: currentStroke.lineWidth
+      });
+    }
+    currentStroke = null; // Limpa o traço atual, já que o menu será aberto
+    redraw(); // Atualiza o canvas se um traço de ponto único foi removido
+  }
+  isDrawing = false; // Garante que o modo de desenho seja desativado
+
+  // Define a posição e visibilidade do menu
+  menu.x = screenX;
+  menu.y = screenY;
+  menu.visible = true;
+}
+
 function handleTouchStart(event) {
-     menu.visible = false;
-     const rect = viewportCanvasRef.value.getBoundingClientRect();
-     for (let i = 0; i < event.changedTouches.length; i++) {
-         touchCache.push(JSON.parse(JSON.stringify(event.changedTouches[i])));
-     }
+  event.preventDefault(); // Prevenir comportamento padrão do navegador (scroll, zoom da página)
+  menu.visible = false;   // Esconder menu de contexto se estiver visível
+  const touches = event.touches;
+  const rect = viewportCanvasRef.value.getBoundingClientRect();
 
-     if (touchCache.length === 1) {
-         const touch = touchCache[0];
-         const { x, y } = screenToWorldCoordinates(touch.clientX - rect.left, touch.clientY - rect.top);
-         currentStroke = {
-             points: [{ x, y }],
-             color: drawingSettings.color,
-             lineWidth: drawingSettings.lineWidth, // Espessura do mundo
-         };
-         strokes.value.push(currentStroke); // Adiciona localmente
-         redraw(); // Redesenha localmente
+  if (touches.length === 1) { // Um dedo tocando
+    isMultiTouching = false;
+    const touch = touches[0];
+    touchStartCoords = { x: touch.clientX, y: touch.clientY, time: Date.now() };
 
-         const currentTime = new Date().getTime();
-         if (currentTime - lastTapTime < DOUBLE_TAP_THRESHOLD) {
-             resetView();
-             if (currentStroke) { 
-                 const index = strokes.value.indexOf(currentStroke);
-                 if (index > -1) strokes.value.splice(index, 1); // Remove o traço do double tap
-                 currentStroke = null;
-             }
-             redraw(); // Garante que o traço removido desapareça
-         }
-         lastTapTime = currentTime;
-     } else if (touchCache.length === 2) {
-         viewportState.isPanning = true;
-         const t1 = touchCache[0];
-         const t2 = touchCache[1];
-         initialPinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-         initialTouchMidpoint = getTouchMidpoint(t1, t2, rect);
-         viewportState.lastPanX = viewportState.offsetX;
-         viewportState.lastPanY = viewportState.offsetY;
-     }
+    // Iniciar temporizador para toque longo (menu de contexto)
+    clearTimeout(longPressTimer); // Limpar qualquer temporizador anterior
+    longPressTimer = setTimeout(() => {
+      // Verifica se o dedo não se moveu muito e ainda é um único toque
+      const currentTime = Date.now();
+      if (!isDrawing && !isMultiTouching && (currentTime - touchStartCoords.time) >= longPressDuration) {
+        showContextMenuAt(touchStartCoords.x, touchStartCoords.y);
+      }
+      longPressTimer = null;
+    }, longPressDuration);
+
+    // Iniciar desenho
+    const screenX = touch.clientX - rect.left;
+    const screenY = touch.clientY - rect.top;
+    const worldCoords = screenToWorldCoordinates(screenX, screenY);
+    
+    currentStroke = {
+      points: [worldCoords],
+      color: drawingSettings.color,
+      lineWidth: drawingSettings.lineWidth, // Espessura no "mundo"
+    };
+    strokes.value.push(currentStroke); // Adiciona localmente para feedback imediato
+    isDrawing = true;
+    redraw(); // Redesenha para mostrar o primeiro ponto
+  
+  } else if (touches.length === 2) { // Dois dedos tocando: prepara para pan/zoom
+    clearTimeout(longPressTimer); // Cancela o toque longo se o segundo dedo descer
+    longPressTimer = null;
+    isDrawing = false;          // Para de desenhar se estava com um dedo
+    isMultiTouching = true;
+
+    // Se havia um currentStroke de um dedo que acabou de se tornar um gesto de dois dedos,
+    // finalize-o se for válido, ou remova-o se for apenas um ponto.
+    if (currentStroke) {
+        if (currentStroke.points.length > 1) {
+            if (socket.value) {
+                socket.value.emit('draw_stroke_event', {
+                    points: currentStroke.points,
+                    color: currentStroke.color,
+                    lineWidth: currentStroke.lineWidth
+                });
+            }
+        } else { // Apenas um ponto, remove
+            const index = strokes.value.indexOf(currentStroke);
+            if (index > -1) {
+                strokes.value.splice(index, 1);
+            }
+        }
+        currentStroke = null;
+        redraw(); // Atualiza para remover/finalizar o traço anterior
+    }
+
+
+    const t1 = touches[0];
+    const t2 = touches[1];
+
+    initialGestureInfo.pinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    
+    const screenMidX = (t1.clientX - rect.left + t2.clientX - rect.left) / 2;
+    const screenMidY = (t1.clientY - rect.top + t2.clientY - rect.top) / 2;
+    initialGestureInfo.midpoint = { x: screenMidX, y: screenMidY }; // Ponto médio na tela
+    
+    // Ponto no mundo que está sob o ponto médio dos dedos NO INÍCIO do gesto
+    initialGestureInfo.worldMidpoint = screenToWorldCoordinates(screenMidX, screenY);
+    
+    initialGestureInfo.offsetX = viewportState.offsetX;
+    initialGestureInfo.offsetY = viewportState.offsetY;
+    initialGestureInfo.scale = viewportState.scale;
+  }
 }
 
 function handleTouchMove(event) {
-  if (touchCache.length === 0) return;
+  event.preventDefault();
+  const touches = event.touches;
   const rect = viewportCanvasRef.value.getBoundingClientRect();
 
-  // Atualizar posições no cache
-  for (let i = 0; i < event.changedTouches.length; i++) {
-    const movedTouch = event.changedTouches[i];
-    const cacheIndex = touchCache.findIndex(t => t.identifier === movedTouch.identifier);
-    if (cacheIndex !== -1) {
-      touchCache[cacheIndex] = JSON.parse(JSON.stringify(movedTouch));
+  if (touches.length === 1 && !isMultiTouching) { // Mover com um dedo
+    const touch = touches[0];
+    const screenX = touch.clientX - rect.left;
+    const screenY = touch.clientY - rect.top;
+
+    // Se o temporizador de toque longo ainda estiver ativo, verifica se o dedo moveu demais
+    if (longPressTimer) {
+      const deltaX = touch.clientX - touchStartCoords.x;
+      const deltaY = touch.clientY - touchStartCoords.y;
+      if (Math.hypot(deltaX, deltaY) > longPressMoveThreshold) {
+        clearTimeout(longPressTimer); // Cancela o toque longo
+        longPressTimer = null;
+      }
     }
-  }
 
-  if (touchCache.length === 1 && currentStroke) { // Um dedo movendo: desenhar
-    const touch = touchCache[0];
-    const { x, y } = screenToWorldCoordinates(touch.clientX - rect.left, touch.clientY - rect.top);
-    currentStroke.points.push({ x, y });
-    redraw();
-  } else if (touchCache.length === 2 && viewportState.isPanning) { // Dois dedos movendo: pan e zoom
-    const t1 = touchCache.find(t => t.identifier === event.touches[0].identifier);
-    const t2 = touchCache.find(t => t.identifier === event.touches[1].identifier);
+    // Se estiver no modo de desenho e não esperando por toque longo
+    if (isDrawing && currentStroke && !longPressTimer) {
+      const worldCoords = screenToWorldCoordinates(screenX, screenY);
+      currentStroke.points.push(worldCoords);
+      redraw();
+    }
 
-    if (!t1 || !t2) return; // Se um dos toques não estiver no cache (improvável aqui)
+  } else if (touches.length === 2 && isMultiTouching) { // Mover com dois dedos (pan/zoom)
+    // Garante que o toque longo seja cancelado
+    if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+    }
+    isDrawing = false; // Não está desenhando ao fazer gesto de pan/zoom
 
-    const currentMidpoint = getTouchMidpoint(t1, t2, rect);
+    const t1 = touches[0];
+    const t2 = touches[1];
 
-    // --- PAN com Dois Dedos ---
-    // Mover o mundo com base no delta do ponto médio dos toques
-    // viewportState.offsetX = viewportState.lastPanX + (currentMidpoint.x - initialTouchMidpoint.x);
-    // viewportState.offsetY = viewportState.lastPanY + (currentMidpoint.y - initialTouchMidpoint.y);
+    const currentScreenMidX = (t1.clientX - rect.left + t2.clientX - rect.left) / 2;
+    const currentScreenMidY = (t1.clientY - rect.top + t2.clientY - rect.top) / 2;
+    
+    // --- Pan ---
+    // O pan é a diferença entre o ponto médio inicial dos dedos (em coordenadas de tela)
+    // e o ponto médio atual, adicionado ao offset inicial da viewport.
+    const deltaMidX = currentScreenMidX - initialGestureInfo.midpoint.x;
+    const deltaMidY = currentScreenMidY - initialGestureInfo.midpoint.y;
+    
+    viewportState.offsetX = initialGestureInfo.offsetX + deltaMidX;
+    viewportState.offsetY = initialGestureInfo.offsetY + deltaMidY;
 
-    // --- ZOOM com Dois Dedos (Pinch) ---
+    // --- Zoom (Pinch) ---
     const currentPinchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-    let scaleChange = 1;
-    if (initialPinchDistance > 0) { // Evitar divisão por zero
-      scaleChange = currentPinchDistance / initialPinchDistance;
+    let scaleFactor = 1;
+    if (initialGestureInfo.pinchDistance > 0) { // Evita divisão por zero
+      scaleFactor = currentPinchDistance / initialGestureInfo.pinchDistance;
     }
+    
+    let newScale = initialGestureInfo.scale * scaleFactor;
+    newScale = Math.max(0.05, Math.min(newScale, 20)); // Limita o zoom
 
-    const worldP_mid_beforeZoom = screenToWorldCoordinates(initialTouchMidpoint.x, initialTouchMidpoint.y);
-
-    let newScale = viewportState.scale * scaleChange;
-    newScale = Math.max(0.05, Math.min(newScale, 20)); // Limitar zoom
-
+    // Para dar zoom em relação ao ponto médio dos dedos:
+    // O ponto do "mundo" que estava sob o ponto médio inicial dos dedos
+    // deve permanecer sob o ponto médio atual dos dedos após o novo zoom.
+    viewportState.offsetX = currentScreenMidX - initialGestureInfo.worldMidpoint.x * newScale;
+    viewportState.offsetY = currentScreenMidY - initialGestureInfo.worldMidpoint.y * newScale;
     viewportState.scale = newScale;
-    // Após o zoom, o ponto do mundo que estava sob o *ponto médio inicial dos dedos*
-    // deve agora estar sob o *ponto médio atual dos dedos*.
-    viewportState.offsetX = currentMidpoint.x - worldP_mid_beforeZoom.x * viewportState.scale;
-    viewportState.offsetY = currentMidpoint.y - worldP_mid_beforeZoom.y * viewportState.scale;
 
-    // Atualizar para o próximo movimento
-    initialPinchDistance = currentPinchDistance; // A distância anterior agora é a atual
-    // initialTouchMidpoint = currentMidpoint; // O ponto médio anterior agora é o atual
-    // viewportState.lastPanX = viewportState.offsetX; // Atualizar offset para próximo pan relativo
-    // viewportState.lastPanY = viewportState.offsetY;
-
-
-    if (currentStroke) { // Ajustar espessura do traço atual se estiver desenhando e zoomando
-      currentStroke.lineWidth = drawingSettings.lineWidth / viewportState.scale;
-    }
     redraw();
   }
 }
+
 
 function removeTouchFromCache(touchIdentifier) {
   const index = touchCache.findIndex(t => t.identifier === touchIdentifier);
@@ -449,29 +543,44 @@ function removeTouchFromCache(touchIdentifier) {
 }
 
 function handleTouchEnd(event) {
-  if (currentStroke && currentStroke.points.length > 1) {
-    if (socket.value) {
-      // currentStroke.lineWidth já é a espessura no "mundo"
-      socket.value.emit('draw_stroke_event', {
-        points: currentStroke.points,
-        color: currentStroke.color,
-        lineWidth: currentStroke.lineWidth
-      });
+  event.preventDefault();
+  clearTimeout(longPressTimer); // Sempre limpa o temporizador de toque longo
+  longPressTimer = null;
+
+  const touchesStillOnScreen = event.touches.length;
+
+  // Se um traço estava sendo desenhado (isDrawing era true) e era um toque único
+  if (isDrawing && currentStroke && !isMultiTouching) {
+    if (currentStroke.points.length > 1) { // Só emite se for mais que um ponto
+      if (socket.value) {
+        socket.value.emit('draw_stroke_event', {
+          points: currentStroke.points,
+          color: currentStroke.color,
+          lineWidth: currentStroke.lineWidth
+        });
+      }
+    } else {
+      // Se for apenas um ponto (clique/toque rápido sem mover), remove da lista local
+      const index = strokes.value.indexOf(currentStroke);
+      if (index > -1) {
+        strokes.value.splice(index, 1);
+      }
+      redraw(); // Para limpar o ponto único da tela
     }
   }
-  currentStroke = null; // Resetar sempre
 
-  for (let i = 0; i < event.changedTouches.length; i++) {
-    removeTouchFromCache(event.changedTouches[i].identifier);
+  // Reseta o estado de desenho/gesto se não houver mais dedos ou se voltar para um dedo
+  if (touchesStillOnScreen < 2) {
+    isMultiTouching = false;
+    // Se ainda houver um dedo, e não estávamos fazendo multi-touch,
+    // o próximo touchstart tratará como um novo toque único.
   }
-  if (touchCache.length < 2) {
-    viewportState.isPanning = false;
-    initialPinchDistance = 0;
-    initialTouchMidpoint = null;
-  }
-  if (touchCache.length < 1) {
+  if (touchesStillOnScreen < 1) {
+    isDrawing = false;
     currentStroke = null;
   }
+  // Se estávamos em multi-touch e agora temos 1 dedo, o próximo touchstart/move de 1 dedo reiniciará.
+  // Ou, se estávamos em multi-touch e agora temos 0 dedos, tudo é resetado.
 }
 
 // --- Funções do Menu de Contexto ---
