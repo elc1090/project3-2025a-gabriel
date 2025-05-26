@@ -15,6 +15,9 @@ html, body, #app {
   height: 100%;
   width: 100%;
   box-sizing: border-box;
+  max-width: none !important;
+  text-align: left !important;
+  display: block !important;
 }
 
 html, body {
