@@ -162,6 +162,26 @@ def handle_clear_canvas_event(data): # data pode ser vazio ou conter board_id
     except Exception as e:
         db.session.rollback()
         print(f"Erro ao limpar traços do banco de dados: {e}")
+        
+@socketio.on('debug_touch_event')
+def handle_debug_touch_event(data):
+    """Recebe e printa dados de debug de eventos de toque do frontend."""
+    print("--- DEBUG TOUCH EVENT ---")
+    print(f"  Tipo: {data.get('type')}")
+    print(f"  Touches Ativos: {data.get('touchesLength')}")
+    if 'changedTouchesLength' in data: # Para touchend
+        print(f"  Touches Alterados: {data.get('changedTouchesLength')}")
+    if 'userAgent' in data: # Para touchstart
+        print(f"  User Agent: {data.get('userAgent')}")
+    
+    touch_details = data.get('touchData', [])
+    if touch_details:
+        print(f"  Detalhes dos Toques ({len(touch_details)}):")
+        for i, touch in enumerate(touch_details):
+            print(f"    Toque {i}: ID={touch.get('id')}, ClientX={touch.get('clientX')}, ClientY={touch.get('clientY')}, Target={touch.get('target', 'N/A')}")
+    else:
+        print("  Sem dados detalhados de toque.")
+    print("-------------------------\n")
 
 if __name__ == '__main__':
     print("Iniciando servidor Flask-SocketIO com Eventlet...")

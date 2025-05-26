@@ -386,6 +386,25 @@ function handleTouchStart(event) {
   menu.visible = false;   // Esconder menu de contexto se estiver visível
   const touches = event.touches;
   const rect = viewportCanvasRef.value.getBoundingClientRect();
+  
+   if (socket.value) {
+    const touchDataForDebug = [];
+    for (let i = 0; i < touches.length; i++) {
+      touchDataForDebug.push({
+        id: touches[i].identifier,
+        clientX: touches[i].clientX,
+        clientY: touches[i].clientY,
+        target: touches[i].target?.toString() // Para ver o elemento alvo
+      });
+    }
+    socket.value.emit('debug_touch_event', {
+      type: 'touchstart',
+      touchesLength: touches.length,
+      changedTouchesLength: event.changedTouches.length,
+      touchData: touchDataForDebug,
+      userAgent: navigator.userAgent // Enviar User-Agent para identificar o dispositivo
+    });
+  }
 
   if (touches.length === 1) { // Um dedo tocando
     isMultiTouching = false;
@@ -467,6 +486,23 @@ function handleTouchMove(event) {
   event.preventDefault();
   const touches = event.touches;
   const rect = viewportCanvasRef.value.getBoundingClientRect();
+  
+   if (socket.value && touches.length > 0) { // Só envia se houver toques ativos
+    const touchDataForDebug = [];
+    for (let i = 0; i < touches.length; i++) {
+      touchDataForDebug.push({
+        id: touches[i].identifier,
+        clientX: touches[i].clientX,
+        clientY: touches[i].clientY,
+      });
+    }
+    socket.value.emit('debug_touch_event', {
+      type: 'touchmove',
+      touchesLength: touches.length,
+      touchData: touchDataForDebug
+    });
+  }
+
 
   if (touches.length === 1 && !isMultiTouching) { // Mover com um dedo
     const touch = touches[0];
@@ -548,6 +584,23 @@ function handleTouchEnd(event) {
   longPressTimer = null;
 
   const touchesStillOnScreen = event.touches.length;
+  
+   if (socket.value) {
+    const touchDataForDebug = [];
+    for (let i = 0; i < changedTouches.length; i++) {
+      touchDataForDebug.push({
+        id: changedTouches[i].identifier,
+        clientX: changedTouches[i].clientX,
+        clientY: changedTouches[i].clientY,
+      });
+    }
+    socket.value.emit('debug_touch_event', {
+      type: 'touchend',
+      touchesLength: touches.length, // Quantos dedos ainda estão na tela
+      changedTouchesLength: changedTouches.length, // Quantos dedos foram levantados
+      touchData: touchDataForDebug // Dados dos dedos levantados
+    });
+  }
 
   // Se um traço estava sendo desenhado (isDrawing era true) e era um toque único
   if (isDrawing && currentStroke && !isMultiTouching) {
