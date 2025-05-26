@@ -1,4 +1,4 @@
-# Projeto: Consumindo uma API pública
+# Projeto: Lousa Colaborativa
 
 <img src="preview.gif" alt="desktop preview" width="720"/>
 
