@@ -601,5 +601,6 @@ function handleMenuSelection(action, value) {
   display: block;
   touch-action: none;
   box-shadow: 0 0 10px rgba(0,0,0,0.3);
+  margin: auto;
 }
 </style>
